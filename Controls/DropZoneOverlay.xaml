@@ -1,0 +1,37 @@
+<Window x:Class="WindowPilot.Controls.DropZoneOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DropZone"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        IsHitTestVisible="False"
+        Focusable="False">
+
+    <Grid x:Name="RootGrid">
+        <!-- 整个区域的半透明遮罩 -->
+        <Border x:Name="OverlayBorder"
+                Background="#22007ACC"
+                BorderBrush="#007ACC"
+                BorderThickness="2"
+                CornerRadius="8"
+                Opacity="0">
+            <Grid>
+                <TextBlock Text="拖放窗口到此处进行管理"
+                           Foreground="White"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Opacity="0.9">
+                    <TextBlock.Effect>
+                        <DropShadowEffect Color="Black" BlurRadius="10" Opacity="0.5" />
+                    </TextBlock.Effect>
+                </TextBlock>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
