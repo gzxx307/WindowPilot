@@ -7,7 +7,10 @@
         WindowState="Maximized"
         Background="{StaticResource BgPrimary}"
         WindowStyle="SingleBorderWindow"
-        ResizeMode="CanResize">
+        ResizeMode="CanResize"
+        Loaded="MainWindow_Loaded"
+        Closing="MainWindow_Closing"
+        SizeChanged="MainWindow_SizeChanged">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -145,8 +148,10 @@
                         </Grid>
                     </Border>
 
-                    <!-- 侧边栏内容 -->
+                    <!-- 侧边栏内容（含释放拖放区） -->
                     <Grid x:Name="SidebarContentPanel" Grid.Row="1">
+
+                        <!-- 空状态提示 -->
                         <Border x:Name="EmptyStatePanel" Visibility="Visible">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16">
                                 <TextBlock Text="◇" Foreground="{StaticResource FgSecondary}"
@@ -162,6 +167,8 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- 窗口列表
+                             条目支持拖拽：拖到其他条目 = 互换位置；拖到底部红色区域 = 释放托管 -->
                         <ListBox x:Name="WindowListBox"
                                  Background="Transparent" BorderThickness="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -182,10 +189,25 @@
                             </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border x:Name="ItemBorder" Padding="10,8"
+                                    <!--
+                                        拖拽操作说明：
+                                        · PreviewMouseLeftButtonDown / PreviewMouseMove：启动 WPF 拖拽
+                                        · DragOver / DragLeave / Drop：接收其他条目的拖放（互换位置）
+                                        · MouseLeftButtonUp：无拖拽时触发点击切换
+                                    -->
+                                    <Border x:Name="ItemBorder"
+                                            Padding="10,8"
                                             Background="Transparent"
-                                            BorderThickness="2,0,0,0" BorderBrush="Transparent"
-                                            Cursor="Hand" MouseLeftButtonDown="WindowItem_Click">
+                                            BorderThickness="2,0,0,0"
+                                            BorderBrush="Transparent"
+                                            Cursor="Hand"
+                                            AllowDrop="True"
+                                            MouseLeftButtonUp="WindowItem_Click"
+                                            PreviewMouseLeftButtonDown="WindowItemBorder_PreviewMouseLeftButtonDown"
+                                            PreviewMouseMove="WindowItemBorder_PreviewMouseMove"
+                                            DragOver="WindowItemBorder_DragOver"
+                                            DragLeave="WindowItemBorder_DragLeave"
+                                            Drop="WindowItemBorder_Drop">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="28" />
@@ -248,6 +270,30 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+
+                        <!-- ✨ 拖拽释放区：拖动侧边栏条目时出现，松手即解除托管 -->
+                        <Border x:Name="SidebarReleaseZone"
+                                VerticalAlignment="Bottom"
+                                Height="52"
+                                Background="#33F44747"
+                                BorderBrush="{StaticResource FgError}"
+                                BorderThickness="0,1,0,0"
+                                AllowDrop="True"
+                                Visibility="Collapsed"
+                                Panel.ZIndex="10"
+                                DragOver="SidebarReleaseZone_DragOver"
+                                Drop="SidebarReleaseZone_Drop">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="✕" HorizontalAlignment="Center"
+                                           Foreground="{StaticResource FgError}"
+                                           FontSize="13" FontWeight="Bold" />
+                                <TextBlock Text="拖至此处释放托管"
+                                           Foreground="{StaticResource FgError}"
+                                           FontSize="10" HorizontalAlignment="Center"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border>
+
                     </Grid>
                 </Grid>
             </Border>
@@ -260,7 +306,8 @@
 
             <!-- ── 嵌入宿主区域 ── -->
             <Border Grid.Column="2" x:Name="HostPanel"
-                    Background="#1A1A1A" ClipToBounds="True">
+                    Background="#1A1A1A" ClipToBounds="True"
+                    SizeChanged="HostPanel_SizeChanged">
                 <Border x:Name="DropHintPanel" Visibility="Visible">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="⊞" Foreground="{StaticResource FgSecondary}"
@@ -333,7 +380,7 @@
                            Text="就绪" Foreground="White" FontSize="11"
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 <TextBlock Grid.Column="1"
-                           Text="Ctrl+Alt+G 抓取 │ Ctrl+Alt+← → 切换"
+                           Text="Ctrl+Alt+G 抓取 │ Ctrl+Alt+← → 切换 │ 侧边栏条目可拖拽排序"
                            Foreground="#BBFFFFFF" FontSize="10" VerticalAlignment="Center" />
             </Grid>
         </Border>
