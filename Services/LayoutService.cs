@@ -149,6 +149,75 @@ public class LayoutService
         }
     }
 
+    // ────────────────────────── 槽位查询 ──────────────────────────
+
+    /// <summary>
+    /// 根据屏幕坐标（物理像素）查找对应的布局槽位索引。
+    /// 先将屏幕坐标转换为宿主客户区坐标，再匹配槽位。
+    /// 返回 -1 表示不在任何槽位上。
+    /// </summary>
+    public int GetSlotIndexAtScreenPoint(System.Windows.Point screenPt, IntPtr hostHwnd)
+    {
+        if (hostHwnd == IntPtr.Zero || Slots.Count == 0)
+            return -1;
+
+        var clientPt = new POINT { X = (int)screenPt.X, Y = (int)screenPt.Y };
+        NativeMethods.ScreenToClient(hostHwnd, ref clientPt);
+
+        return GetSlotIndexAtClientPoint(clientPt.X, clientPt.Y);
+    }
+
+    /// <summary>
+    /// 根据宿主客户区坐标查找对应的布局槽位索引。
+    /// 返回 -1 表示不在任何槽位上。
+    /// </summary>
+    public int GetSlotIndexAtClientPoint(int clientX, int clientY)
+    {
+        for (int i = 0; i < Slots.Count; i++)
+        {
+            var slot = Slots[i];
+            if (clientX >= slot.X && clientX < slot.X + slot.Width &&
+                clientY >= slot.Y && clientY < slot.Y + slot.Height)
+                return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// 获取指定槽位上的 ManagedWindow（根据列表中的顺序映射）。
+    /// 返回 null 表示该槽位无窗口。
+    /// </summary>
+    public ManagedWindow? GetWindowAtSlotIndex(int slotIndex)
+    {
+        var windows = _windowManager.ManagedWindows;
+        if (slotIndex < 0 || slotIndex >= windows.Count)
+            return null;
+        return windows[slotIndex];
+    }
+
+    /// <summary>
+    /// 将槽位的客户区坐标转换为屏幕坐标矩形。
+    /// 用于定位覆盖层。
+    /// </summary>
+    public System.Windows.Rect GetSlotScreenRect(int slotIndex, IntPtr hostHwnd)
+    {
+        if (slotIndex < 0 || slotIndex >= Slots.Count || hostHwnd == IntPtr.Zero)
+            return System.Windows.Rect.Empty;
+
+        var slot = Slots[slotIndex];
+
+        var tlPt = new POINT { X = slot.X, Y = slot.Y };
+        NativeMethods.ClientToScreen(hostHwnd, ref tlPt);
+
+        var brPt = new POINT { X = slot.X + slot.Width, Y = slot.Y + slot.Height };
+        NativeMethods.ClientToScreen(hostHwnd, ref brPt);
+
+        return new System.Windows.Rect(
+            tlPt.X, tlPt.Y,
+            brPt.X - tlPt.X,
+            brPt.Y - tlPt.Y);
+    }
+
     /// <summary>
     /// 堆叠模式切换到指定窗口
     /// </summary>

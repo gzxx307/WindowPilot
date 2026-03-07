@@ -119,6 +119,9 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, ref MINMAXINFO lParam);
 
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
     // ── Process Info ──
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -190,6 +193,12 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
+    /// <summary>
+    /// 返回指定点处的子窗口句柄（递归查找最深层子窗口）
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr ChildWindowFromPointEx(IntPtr hWndParent, POINT pt, uint uFlags);
+
     // ── Window Reparenting ──
     [DllImport("user32.dll")]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
@@ -205,6 +214,10 @@ public static class NativeMethods
     // ── DPI ──
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    // ── Keyboard state ──
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
 
     // ── Misc ──
     [DllImport("user32.dll")]
@@ -233,4 +246,8 @@ public static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool DestroyIcon(IntPtr hIcon);
+
+    // ── ReleaseCapture（用于编程式发起窗口拖拽） ──
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
 }

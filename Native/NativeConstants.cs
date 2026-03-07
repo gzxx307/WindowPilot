@@ -48,6 +48,7 @@ public static class NativeConstants
     public const int SW_RESTORE  = 9;
     public const int SW_SHOW     = 5;
     public const int SW_MINIMIZE = 6;
+    public const int SW_HIDE     = 0;
 
     // ── WinEvent Constants ──
     public const uint WINEVENT_OUTOFCONTEXT   = 0x0000;
@@ -72,6 +73,21 @@ public static class NativeConstants
     // ── Window Messages ──
     public const int WM_GETMINMAXINFO = 0x0024;
     public const int WM_HOTKEY        = 0x0312;
+    public const int WM_SYSCOMMAND    = 0x0112;
+    public const int WM_KEYDOWN       = 0x0100;
+
+    // ── SysCommand 参数 ──
+    public const int SC_MOVE = 0xF010;
+
+    // ── 虚拟键码 ──
+    public const int VK_MENU   = 0x12;   // Alt
+    public const int VK_LEFT   = 0x25;
+    public const int VK_UP     = 0x26;
+    public const int VK_RIGHT  = 0x27;
+    public const int VK_DOWN   = 0x28;
+
+    // ── Non-client hit-test ──
+    public const int HTCAPTION = 2;
 
     // ── DWM Thumbnail ──
     public const int DWM_TNP_RECTDESTINATION = 0x00000001;

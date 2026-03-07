@@ -30,6 +30,20 @@ public class WindowManagerService : IDisposable
         _winEventHook.WindowTitleChanged += OnWindowTitleChanged;
     }
 
+    // ── 查询 ──
+
+    /// <summary>
+    /// 根据句柄查找 ManagedWindow 实例
+    /// </summary>
+    public ManagedWindow? FindByHandle(IntPtr hwnd)
+        => ManagedWindows.FirstOrDefault(w => w.Handle == hwnd);
+
+    /// <summary>
+    /// 判断窗口是否已被管理
+    /// </summary>
+    public bool IsManaged(IntPtr hwnd)
+        => ManagedWindows.Any(w => w.Handle == hwnd);
+
     // ── 嵌入 ──
 
     /// <summary>
@@ -114,6 +128,103 @@ public class WindowManagerService : IDisposable
         catch { return false; }
     }
 
+    // ── 临时脱嵌 / 重新嵌入（用于拖拽互换和释放） ──
+
+    /// <summary>
+    /// 临时将窗口从宿主中脱离，使其成为顶层窗口以便自由拖拽。
+    /// 窗口仍然保留在 ManagedWindows 列表中。
+    /// </summary>
+    public bool TemporaryUnembed(IntPtr hwnd)
+    {
+        var window = FindByHandle(hwnd);
+        if (window == null || !window.IsEmbedded) return false;
+
+        try
+        {
+            // 先获取窗口当前在宿主客户区内的位置
+            NativeMethods.GetWindowRect(hwnd, out RECT currentRect);
+
+            // 脱离宿主
+            NativeMethods.SetParent(hwnd, IntPtr.Zero);
+
+            // 恢复为可拖拽的顶层窗口样式（保留精简外观）
+            long style = NativeMethods.GetWindowLongSafe(hwnd, NativeConstants.GWL_STYLE);
+            style &= ~(long)NativeConstants.WS_CHILD;
+            style |= (long)(NativeConstants.WS_POPUP | NativeConstants.WS_CAPTION
+                            | NativeConstants.WS_SYSMENU | NativeConstants.WS_VISIBLE);
+            style &= ~(long)(NativeConstants.WS_THICKFRAME
+                             | NativeConstants.WS_MINIMIZEBOX
+                             | NativeConstants.WS_MAXIMIZEBOX);
+            NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_STYLE, style);
+
+            NativeMethods.SetWindowPos(hwnd, NativeConstants.HWND_TOPMOST,
+                currentRect.Left, currentRect.Top,
+                currentRect.Width, currentRect.Height,
+                NativeConstants.SWP_FRAMECHANGED | NativeConstants.SWP_SHOWWINDOW);
+
+            window.IsEmbedded = false;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 将临时脱嵌的窗口重新嵌入宿主
+    /// </summary>
+    public bool ReEmbed(IntPtr hwnd)
+    {
+        var window = FindByHandle(hwnd);
+        if (window == null || window.IsEmbedded) return false;
+
+        try
+        {
+            long style = NativeMethods.GetWindowLongSafe(hwnd, NativeConstants.GWL_STYLE);
+            style &= ~(long)(NativeConstants.WS_CAPTION | NativeConstants.WS_THICKFRAME
+                             | NativeConstants.WS_SYSMENU | NativeConstants.WS_MINIMIZEBOX
+                             | NativeConstants.WS_MAXIMIZEBOX | NativeConstants.WS_POPUP
+                             | NativeConstants.WS_BORDER | NativeConstants.WS_DLGFRAME);
+            style |= (long)(NativeConstants.WS_CHILD | NativeConstants.WS_VISIBLE);
+            NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_STYLE, style);
+
+            long exStyle = NativeMethods.GetWindowLongSafe(hwnd, NativeConstants.GWL_EXSTYLE);
+            exStyle &= ~(long)(NativeConstants.WS_EX_APPWINDOW | NativeConstants.WS_EX_TOOLWINDOW
+                               | NativeConstants.WS_EX_TOPMOST);
+            NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_EXSTYLE, exStyle);
+
+            NativeMethods.SetParent(hwnd, HostHwnd);
+
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE
+                | NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
+
+            NativeMethods.ShowWindow(hwnd, NativeConstants.SW_SHOW);
+
+            window.IsEmbedded = true;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 编程式发起窗口拖拽：临时脱嵌窗口并启动系统 Move 操作。
+    /// 调用后窗口进入模态拖拽循环，直到用户松开鼠标。
+    /// </summary>
+    public bool StartProgrammaticDrag(IntPtr hwnd)
+    {
+        if (!TemporaryUnembed(hwnd))
+            return false;
+
+        // 使用 PostMessage 而非 SendMessage，让消息进入目标窗口的消息队列，
+        // 这样不会阻塞我们的线程。
+        // SC_MOVE | 0x02 表示通过鼠标移动（系统会自动捕获鼠标位置）
+        NativeMethods.PostMessage(hwnd,
+            (uint)NativeConstants.WM_SYSCOMMAND,
+            (IntPtr)(NativeConstants.SC_MOVE | 0x0002),
+            IntPtr.Zero);
+
+        return true;
+    }
+
     // ── 释放 ──
 
     public void ReleaseWindow(IntPtr hwnd)
@@ -121,7 +232,15 @@ public class WindowManagerService : IDisposable
         var window = ManagedWindows.FirstOrDefault(w => w.Handle == hwnd);
         if (window == null) return;
 
-        UnembedWindow(window);
+        // 如果窗口处于临时脱嵌状态，直接还原即可
+        if (!window.IsEmbedded)
+        {
+            RestoreOriginalState(window);
+        }
+        else
+        {
+            UnembedWindow(window);
+        }
 
         window.IsManaged  = false;
         window.IsEmbedded = false;
@@ -138,6 +257,19 @@ public class WindowManagerService : IDisposable
         try
         {
             NativeMethods.SetParent(hwnd, IntPtr.Zero);
+            RestoreOriginalState(window);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 还原窗口的原始样式和位置
+    /// </summary>
+    private void RestoreOriginalState(ManagedWindow window)
+    {
+        IntPtr hwnd = window.Handle;
+        try
+        {
             NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_STYLE,   window.OriginalStyle);
             NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_EXSTYLE, window.OriginalExStyle);
 
@@ -199,7 +331,7 @@ public class WindowManagerService : IDisposable
             NativeMethods.ShowWindow(w.Handle, NativeConstants.SW_SHOW);
     }
 
-    // ── ✨ 新功能：交换两个托管窗口在列表中的顺序 ──
+    // ── ✨ 交换两个托管窗口在列表中的顺序 ──
 
     /// <summary>
     /// 交换两个窗口在 ManagedWindows 列表中的位置。

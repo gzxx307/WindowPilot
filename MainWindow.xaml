@@ -380,7 +380,7 @@
                            Text="就绪" Foreground="White" FontSize="11"
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 <TextBlock Grid.Column="1"
-                           Text="Ctrl+Alt+G 抓取 │ Ctrl+Alt+← → 切换 │ 侧边栏条目可拖拽排序"
+                           Text="Ctrl+Alt+G 抓取 │ Ctrl+Alt+M 拖拽移动 │ Ctrl+Alt+← → 切换 │ 侧边栏条目可拖拽排序"
                            Foreground="#BBFFFFFF" FontSize="10" VerticalAlignment="Center" />
             </Grid>
         </Border>

@@ -21,7 +21,11 @@ public partial class MainWindow : Window
     private readonly HotkeyService         _hotkey        = new();
 
     // ── 覆盖层（拖拽外部窗口时显示在侧边栏上方） ──
-    private DropZoneOverlay? _overlay;
+    private DropZoneOverlay?       _overlay;
+
+    // ── 覆盖层（拖拽已托管窗口时） ──
+    private ReleaseZoneOverlay?    _releaseOverlay;     // 红色：拖至侧边栏释放
+    private SwapIndicatorOverlay?  _swapOverlay;        // 蓝色：目标槽位互换提示
 
     // ── 侧边栏状态 ──
     private bool   _sidebarExpanded    = true;
@@ -30,6 +34,9 @@ public partial class MainWindow : Window
     // ── 侧边栏条目拖拽状态 ──
     private Point _dragItemStartPoint;
     private bool  _isItemDragInProgress;
+
+    // ── 已托管窗口拖拽状态 ──
+    private int _currentHoverSlotIndex = -1;  // 当前鼠标悬停的槽位索引
 
     // ────────────────────────── 构造函数 ──────────────────────────
 
@@ -51,12 +58,19 @@ public partial class MainWindow : Window
         _windowManager.LayoutChanged  += () => Dispatcher.BeginInvoke(() => _layout.ApplyLayout());
         _windowManager.ManageFailed   += (_, msg) => Dispatcher.BeginInvoke(() => SetStatus(msg));
 
-        // 拖拽检测事件（外部窗口拖入侧边栏）
+        // ── 外部窗口拖入侧边栏 ──
         _dragDetection.ExternalDragStarted    += _ => Dispatcher.BeginInvoke(ShowDropOverlay);
         _dragDetection.DragEnded              += _ => Dispatcher.BeginInvoke(HideDropOverlay);
         _dragDetection.DragMoved              += (_, pt) => Dispatcher.BeginInvoke(() => UpdateDebugMousePos(pt));
         _dragDetection.WindowDroppedInZone    += OnWindowDroppedInZone;
         _dragDetection.WindowDraggedOutOfZone += OnWindowDraggedOutOfZone;
+
+        // ── 已托管窗口拖拽（互换 / 释放） ──
+        _dragDetection.ManagedDragStarted           += OnManagedDragStarted;
+        _dragDetection.ManagedDragMoved             += OnManagedDragMoved;
+        _dragDetection.ManagedWindowDroppedOnSidebar += OnManagedWindowDroppedOnSidebar;
+        _dragDetection.ManagedDragCancelled         += OnManagedDragCancelled;
+        _dragDetection.ManagedDragEnded             += OnManagedDragEnded;
     }
 
     // ────────────────────────── 生命周期 ──────────────────────────
@@ -76,13 +90,18 @@ public partial class MainWindow : Window
             () => Dispatcher.BeginInvoke(_layout.SwitchToNext));
         _hotkey.Register(HotkeyService.Modifiers.Ctrl | HotkeyService.Modifiers.Alt, 0x51 /* Q */,
             () => Dispatcher.BeginInvoke(() => SetLayoutMode(LayoutService.LayoutMode.QuadSplit)));
+        // ✨ 新增：Ctrl+Alt+M 编程式发起活跃窗口拖拽（用于不支持原生拖拽的窗口）
+        _hotkey.Register(HotkeyService.Modifiers.Ctrl | HotkeyService.Modifiers.Alt, 0x4D /* M */,
+            StartActiveWindowDrag);
 
-        _overlay = new DropZoneOverlay();
+        _overlay        = new DropZoneOverlay();
+        _releaseOverlay = new ReleaseZoneOverlay();
+        _swapOverlay    = new SwapIndicatorOverlay();
 
         // 初始化宿主区域和放置区域
         Dispatcher.BeginInvoke(() => { UpdateHostArea(); UpdateDropZone(); });
 
-        SetStatus("就绪 — 拖拽窗口到侧边栏以接管，或按 Ctrl+Alt+G 抓取当前窗口");
+        SetStatus("就绪 — 拖拽窗口到侧边栏以接管，或按 Ctrl+Alt+G 抓取当前窗口 │ Ctrl+Alt+M 拖拽移动窗口");
     }
 
     private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -93,6 +112,8 @@ public partial class MainWindow : Window
         _dragDetection.Dispose();
         _winEventHook.Dispose();
         _overlay?.Close();
+        _releaseOverlay?.Close();
+        _swapOverlay?.Close();
     }
 
     private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -137,14 +158,22 @@ public partial class MainWindow : Window
         _dragDetection.SetDropZone(new Rect(tl, br));
 
         // 保持 ManagedWindows 同步
-        _dragDetection.ManagedWindows.Clear();
-        foreach (var w in _windowManager.ManagedWindows)
-            _dragDetection.ManagedWindows.Add(w.Handle);
+        SyncManagedWindowsToDetection();
 
         UpdateDebugDropZone(new Rect(tl, br));
     }
 
-    // ────────────────────────── 覆盖层 ──────────────────────────
+    /// <summary>
+    /// 将 WindowManagerService 的托管窗口列表同步到 DragDetectionService
+    /// </summary>
+    private void SyncManagedWindowsToDetection()
+    {
+        _dragDetection.ManagedWindows.Clear();
+        foreach (var w in _windowManager.ManagedWindows)
+            _dragDetection.ManagedWindows.Add(w.Handle);
+    }
+
+    // ────────────────────────── 覆盖层（外部窗口拖入） ──────────────────────────
 
     private void ShowDropOverlay()
     {
@@ -155,6 +184,29 @@ public partial class MainWindow : Window
     }
 
     private void HideDropOverlay() => _overlay?.HideOverlay();
+
+    // ────────────────────────── 覆盖层（已托管窗口拖拽） ──────────────────────────
+
+    private void ShowReleaseOverlay()
+    {
+        if (_releaseOverlay == null || !IsLoaded || SidebarBorder.ActualWidth <= 0) return;
+        var tl = SidebarBorder.PointToScreen(new Point(0, 0));
+        _releaseOverlay.ShowAtRect(new Rect(tl,
+            new Size(SidebarBorder.ActualWidth, SidebarBorder.ActualHeight)));
+    }
+
+    private void HideReleaseOverlay() => _releaseOverlay?.HideOverlay();
+
+    private void ShowSwapOverlayAtSlot(int slotIndex)
+    {
+        if (_swapOverlay == null) return;
+        var hostHwnd = new WindowInteropHelper(this).Handle;
+        var slotRect = _layout.GetSlotScreenRect(slotIndex, hostHwnd);
+        if (slotRect == Rect.Empty) return;
+        _swapOverlay.ShowAtRect(slotRect);
+    }
+
+    private void HideSwapOverlay() => _swapOverlay?.HideOverlay();
 
     // ────────────────────────── 外部拖拽检测回调 ──────────────────────────
 
@@ -173,6 +225,217 @@ public partial class MainWindow : Window
         {
             _windowManager.ReleaseWindow(hwnd);
             _dragDetection.ManagedWindows.Remove(hwnd);
+        });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // ✨ 已托管窗口拖拽回调（互换位置 / 拖至侧边栏释放）
+    // ════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 已托管窗口开始被拖拽
+    /// </summary>
+    private void OnManagedDragStarted(IntPtr hwnd)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            // 只在非堆叠模式下显示互换相关 UI
+            bool isNonStacked = _layout.CurrentMode != LayoutService.LayoutMode.Stacked;
+
+            // 始终显示红色释放覆盖层（侧边栏）
+            ShowReleaseOverlay();
+
+            _currentHoverSlotIndex = -1;
+
+            if (isNonStacked)
+            {
+                SetStatus("拖拽中 — 移至其他窗口槽位松开可互换位置，移至侧边栏松开可解除托管");
+            }
+            else
+            {
+                SetStatus("拖拽中 — 移至侧边栏松开可解除托管");
+            }
+        });
+    }
+
+    /// <summary>
+    /// 已托管窗口拖拽中鼠标移动 — 实时更新互换提示
+    /// </summary>
+    private void OnManagedDragMoved(IntPtr hwnd, Point screenPt)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            // 非堆叠模式下检测鼠标是否在其他窗口的槽位上
+            if (_layout.CurrentMode != LayoutService.LayoutMode.Stacked)
+            {
+                var hostHwnd = new WindowInteropHelper(this).Handle;
+                int hoverSlot = _layout.GetSlotIndexAtScreenPoint(screenPt, hostHwnd);
+
+                // 找到被拖拽窗口的槽位，排除自身
+                var draggedWindow = _windowManager.FindByHandle(hwnd);
+                if (draggedWindow != null && hoverSlot == draggedWindow.SlotIndex)
+                    hoverSlot = -1; // 悬停在自身槽位上，不显示互换提示
+
+                // 检查悬停的槽位是否有另一个窗口
+                if (hoverSlot >= 0)
+                {
+                    var targetWindow = _layout.GetWindowAtSlotIndex(hoverSlot);
+                    if (targetWindow == null || targetWindow.Handle == hwnd)
+                        hoverSlot = -1; // 槽位为空或是自己，不提示
+                }
+
+                if (hoverSlot != _currentHoverSlotIndex)
+                {
+                    _currentHoverSlotIndex = hoverSlot;
+                    if (hoverSlot >= 0)
+                        ShowSwapOverlayAtSlot(hoverSlot);
+                    else
+                        HideSwapOverlay();
+                }
+            }
+
+            UpdateDebugMousePos(screenPt);
+        });
+    }
+
+    /// <summary>
+    /// 已托管窗口拖至侧边栏 — 解除托管
+    /// </summary>
+    private void OnManagedWindowDroppedOnSidebar(IntPtr hwnd)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            _windowManager.ReleaseWindow(hwnd);
+            _dragDetection.ManagedWindows.Remove(hwnd);
+            var mw = _windowManager.FindByHandle(hwnd);
+            SetStatus($"已释放：{mw?.Title ?? "窗口"}");
+        });
+    }
+
+    /// <summary>
+    /// 已托管窗口拖拽取消（未拖至侧边栏）— 检查是否互换，否则回到原位
+    /// </summary>
+    private void OnManagedDragCancelled(IntPtr hwnd)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_layout.CurrentMode == LayoutService.LayoutMode.Stacked)
+            {
+                // 堆叠模式下不支持互换，直接重新嵌入回原位
+                ReEmbedAndRelayout(hwnd);
+                return;
+            }
+
+            // 获取鼠标最终位置，判断是否在某个槽位上
+            NativeMethods.GetCursorPos(out POINT cursorPt);
+            var cursorPoint = new Point(cursorPt.X, cursorPt.Y);
+            var hostHwnd = new WindowInteropHelper(this).Handle;
+            int targetSlot = _layout.GetSlotIndexAtScreenPoint(cursorPoint, hostHwnd);
+
+            var draggedWindow = _windowManager.FindByHandle(hwnd);
+            if (draggedWindow == null)
+                return;
+
+            int originalSlot = draggedWindow.SlotIndex;
+
+            // 检查目标槽位上是否有另一个窗口（且不是自己）
+            if (targetSlot >= 0 && targetSlot != originalSlot)
+            {
+                var targetWindow = _layout.GetWindowAtSlotIndex(targetSlot);
+                if (targetWindow != null && targetWindow.Handle != hwnd)
+                {
+                    // ✨ 执行互换
+                    // 先重新嵌入被拖拽的窗口
+                    if (!draggedWindow.IsEmbedded)
+                        _windowManager.ReEmbed(hwnd);
+
+                    // 交换列表顺序
+                    _windowManager.SwapOrder(hwnd, targetWindow.Handle);
+                    _layout.ApplyLayout();
+                    SyncManagedWindowsToDetection();
+
+                    SetStatus($"已互换位置：{draggedWindow.Title}  ⇄  {targetWindow.Title}");
+                    return;
+                }
+            }
+
+            // 未命中任何有效目标 → 回到原位
+            ReEmbedAndRelayout(hwnd);
+            SetStatus("拖拽已取消，窗口回到原位");
+        });
+    }
+
+    /// <summary>
+    /// 已托管窗口拖拽结束（总是触发）— 清理覆盖层
+    /// </summary>
+    private void OnManagedDragEnded(IntPtr hwnd)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            HideReleaseOverlay();
+            HideSwapOverlay();
+            _currentHoverSlotIndex = -1;
+        });
+    }
+
+    /// <summary>
+    /// 将临时脱嵌的窗口重新嵌入并重新布局
+    /// </summary>
+    private void ReEmbedAndRelayout(IntPtr hwnd)
+    {
+        var window = _windowManager.FindByHandle(hwnd);
+        if (window != null && !window.IsEmbedded)
+        {
+            _windowManager.ReEmbed(hwnd);
+        }
+        _layout.ApplyLayout();
+        SyncManagedWindowsToDetection();
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // ✨ 编程式发起活跃窗口拖拽（Ctrl+Alt+M）
+    // ════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 热键触发：将当前活跃的托管窗口临时脱嵌并启动系统拖拽。
+    /// 用于不支持原生拖拽（无自定义标题栏）的窗口。
+    /// </summary>
+    private void StartActiveWindowDrag()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_layout.CurrentMode == LayoutService.LayoutMode.Stacked &&
+                _windowManager.ManagedWindows.Count <= 1)
+            {
+                SetStatus("堆叠模式下仅有一个窗口，无需拖拽");
+                return;
+            }
+
+            // 找到当前活跃的窗口
+            var activeWindow = _windowManager.ManagedWindows.FirstOrDefault(w => w.IsActive)
+                             ?? _windowManager.ManagedWindows.FirstOrDefault();
+
+            if (activeWindow == null)
+            {
+                SetStatus("没有可拖拽的托管窗口");
+                return;
+            }
+
+            int originalSlot = activeWindow.SlotIndex;
+
+            // 编程式发起拖拽
+            if (_windowManager.StartProgrammaticDrag(activeWindow.Handle))
+            {
+                // 通知 DragDetection 拖拽已开始（WinEventHook 会检测到 MoveSizeStart）
+                // 但为了确保正确处理，我们也手动通知
+                _dragDetection.NotifyProgrammaticDragStarted(activeWindow.Handle, originalSlot);
+
+                SetStatus($"拖拽 \"{activeWindow.Title}\" — 移动到目标位置后松开鼠标");
+            }
+            else
+            {
+                SetStatus($"无法发起拖拽：\"{activeWindow.Title}\"");
+            }
         });
     }
 
@@ -274,6 +537,7 @@ public partial class MainWindow : Window
         // 交换列表顺序并重新布局
         _windowManager.SwapOrder(dragged.Handle, target.Handle);
         _layout.ApplyLayout();
+        SyncManagedWindowsToDetection();
 
         string modeNote = _layout.CurrentMode == LayoutService.LayoutMode.Stacked
             ? "（堆叠模式：切换顺序已调整）"
@@ -430,9 +694,7 @@ public partial class MainWindow : Window
                 : "0 个窗口";
 
             // 同步到拖拽检测服务
-            _dragDetection.ManagedWindows.Clear();
-            foreach (var w in _windowManager.ManagedWindows)
-                _dragDetection.ManagedWindows.Add(w.Handle);
+            SyncManagedWindowsToDetection();
         });
     }
 
