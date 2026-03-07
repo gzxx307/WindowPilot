@@ -19,8 +19,6 @@
             <RowDefinition Height="*"    />
             <!-- 主内容 -->
             <RowDefinition Height="Auto" />
-            <!-- Debug 面板 -->
-            <RowDefinition Height="Auto" />
             <!-- 状态栏 -->
         </Grid.RowDefinitions>
 
@@ -65,12 +63,6 @@
                     <Button Content="✕ 全部释放"
                             Style="{StaticResource PilotButton}" Margin="2" FontSize="11.5"
                             Click="ReleaseAll_Click" />
-
-                    <Rectangle Width="1" Height="20" Fill="{StaticResource BorderBrush}" Margin="8,0" />
-
-                    <Button x:Name="BtnDebug" Content="⚙ Debug"
-                            Style="{StaticResource PilotButton}" Margin="2" FontSize="11.5"
-                            Click="ToggleDebug_Click" />
                 </StackPanel>
 
                 <TextBlock Grid.Column="2" x:Name="WindowCountText"
@@ -271,7 +263,7 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- ✨ 拖拽释放区：拖动侧边栏条目时出现，松手即解除托管 -->
+                        <!-- 拖拽释放区：拖动侧边栏条目时出现，松手即解除托管 -->
                         <Border x:Name="SidebarReleaseZone"
                                 VerticalAlignment="Bottom"
                                 Height="52"
@@ -323,53 +315,8 @@
             </Border>
         </Grid>
 
-        <!-- ══ Debug 面板（默认隐藏） ══ -->
-        <Border Grid.Row="2" x:Name="DebugPanel"
-                Visibility="Collapsed"
-                Background="#0A0A0A"
-                BorderBrush="#3F3F46"
-                BorderThickness="0,1,0,0"
-                Padding="10,6">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                    <TextBlock Text="DPI / 坐标系" Foreground="#569CD6"
-                               FontSize="10" FontWeight="Bold" Margin="0,0,0,2"/>
-                    <TextBlock x:Name="DbgDpiText"       FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                    <TextBlock x:Name="DbgMousePhysText" FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Margin="0,0,16,0">
-                    <TextBlock Text="DropZone（物理px）" Foreground="#569CD6"
-                               FontSize="10" FontWeight="Bold" Margin="0,0,0,2"/>
-                    <TextBlock x:Name="DbgDropZonePhysText" FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                    <TextBlock x:Name="DbgMouseInZoneText"  FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="2" Margin="0,0,16,0">
-                    <TextBlock Text="Overlay 位置（DIP）" Foreground="#569CD6"
-                               FontSize="10" FontWeight="Bold" Margin="0,0,0,2"/>
-                    <TextBlock x:Name="DbgOverlayDipText" FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                    <TextBlock x:Name="DbgSidebarPhysText" FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="3">
-                    <TextBlock Text="HostArea（客户区px）" Foreground="#569CD6"
-                               FontSize="10" FontWeight="Bold" Margin="0,0,0,2"/>
-                    <TextBlock x:Name="DbgHostAreaText"  FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                    <TextBlock x:Name="DbgHostSizeText"  FontSize="10" Foreground="#9CDCFE" Margin="0,1"/>
-                </StackPanel>
-            </Grid>
-        </Border>
-
         <!-- ══ 状态栏 ══ -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="2"
                 Background="{StaticResource AccentBrush}" Padding="10,4">
             <Grid>
                 <Grid.ColumnDefinitions>

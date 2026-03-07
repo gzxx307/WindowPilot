@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using WindowPilot.Diagnostics;
 using WindowPilot.Native;
 
 namespace WindowPilot.Models;
@@ -15,17 +16,19 @@ namespace WindowPilot.Models;
 /// </summary>
 public class ManagedWindow : INotifyPropertyChanged
 {
-    public IntPtr Handle { get; }
-    public uint ProcessId { get; }
-    public string ProcessName { get; }
+    private const string Cat = "ManagedWindow";
+
+    public IntPtr Handle       { get; }
+    public uint   ProcessId    { get; }
+    public string ProcessName  { get; }
     public string ExecutablePath { get; }
 
     // ── 嵌入前保存的原始状态（释放时还原） ──
-    public IntPtr OriginalParent { get; set; }
-    public long OriginalStyle { get; set; }
-    public long OriginalExStyle { get; set; }
-    public RECT OriginalRect { get; set; }
-    public bool WasMaximized { get; set; }
+    public IntPtr OriginalParent  { get; set; }
+    public long   OriginalStyle   { get; set; }
+    public long   OriginalExStyle { get; set; }
+    public RECT   OriginalRect    { get; set; }
+    public bool   WasMaximized    { get; set; }
 
     private string _title = string.Empty;
     public string Title
@@ -45,31 +48,52 @@ public class ManagedWindow : INotifyPropertyChanged
     public bool IsManaged
     {
         get => _isManaged;
-        set { _isManaged = value; OnPropertyChanged(); }
+        set
+        {
+            if (_isManaged == value) return;
+            Logger.Trace($"[0x{Handle:X}] IsManaged: {_isManaged} → {value}", Cat);
+            _isManaged = value;
+            OnPropertyChanged();
+        }
     }
 
     private bool _isEmbedded;
-    /// <summary>
-    /// 是否已通过 SetParent 嵌入
-    /// </summary>
     public bool IsEmbedded
     {
         get => _isEmbedded;
-        set { _isEmbedded = value; OnPropertyChanged(); }
+        set
+        {
+            if (_isEmbedded == value) return;
+            Logger.Trace($"[0x{Handle:X}] IsEmbedded: {_isEmbedded} → {value}", Cat);
+            _isEmbedded = value;
+            OnPropertyChanged();
+        }
     }
 
     private int _slotIndex = -1;
     public int SlotIndex
     {
         get => _slotIndex;
-        set { _slotIndex = value; OnPropertyChanged(); }
+        set
+        {
+            if (_slotIndex == value) return;
+            Logger.Trace($"[0x{Handle:X}] SlotIndex: {_slotIndex} → {value}", Cat);
+            _slotIndex = value;
+            OnPropertyChanged();
+        }
     }
 
     private bool _isActive;
     public bool IsActive
     {
         get => _isActive;
-        set { _isActive = value; OnPropertyChanged(); }
+        set
+        {
+            if (_isActive == value) return;
+            Logger.Trace($"[0x{Handle:X}] IsActive: {_isActive} → {value}  \"{_title}\"", Cat);
+            _isActive = value;
+            OnPropertyChanged();
+        }
     }
 
     public ManagedWindow(IntPtr handle)
@@ -91,6 +115,11 @@ public class ManagedWindow : INotifyPropertyChanged
         ExecutablePath = GetProcessPath(pid);
         RefreshTitle();
         RefreshIcon();
+
+        Logger.Debug(
+            $"ManagedWindow 构造完成: hwnd=0x{handle:X}  " +
+            $"\"{_title}\"  进程={ProcessName}  PID={pid}  " +
+            $"exe=\"{ExecutablePath}\"", Cat);
     }
 
     /// <summary>
@@ -98,31 +127,46 @@ public class ManagedWindow : INotifyPropertyChanged
     /// </summary>
     public void SaveOriginalState()
     {
-        OriginalParent = NativeMethods.GetParent(Handle);
-        OriginalStyle = NativeMethods.GetWindowLongSafe(Handle, NativeConstants.GWL_STYLE);
+        OriginalParent  = NativeMethods.GetParent(Handle);
+        OriginalStyle   = NativeMethods.GetWindowLongSafe(Handle, NativeConstants.GWL_STYLE);
         OriginalExStyle = NativeMethods.GetWindowLongSafe(Handle, NativeConstants.GWL_EXSTYLE);
         NativeMethods.GetWindowRect(Handle, out RECT rect);
-        OriginalRect = rect;
-        WasMaximized = NativeMethods.IsZoomed(Handle);
+        OriginalRect    = rect;
+        WasMaximized    = NativeMethods.IsZoomed(Handle);
+
+        Logger.Trace(
+            $"SaveOriginalState [0x{Handle:X}]: " +
+            $"parent=0x{OriginalParent:X}  style=0x{OriginalStyle:X}  " +
+            $"exStyle=0x{OriginalExStyle:X}  " +
+            $"rect=({rect.Left},{rect.Top},{rect.Width}×{rect.Height})  " +
+            $"wasMaximized={WasMaximized}", Cat);
     }
 
     public void RefreshTitle()
     {
         int length = NativeMethods.GetWindowTextLength(Handle);
+        string newTitle;
         if (length > 0)
         {
             var sb = new StringBuilder(length + 1);
             NativeMethods.GetWindowText(Handle, sb, sb.Capacity);
-            Title = sb.ToString();
+            newTitle = sb.ToString();
         }
         else
         {
-            Title = ProcessName;
+            newTitle = ProcessName;
+        }
+
+        if (_title != newTitle)
+        {
+            Logger.Trace($"[0x{Handle:X}] RefreshTitle: \"{_title}\" → \"{newTitle}\"", Cat);
+            Title = newTitle;
         }
     }
 
     public void RefreshIcon()
     {
+        Logger.Trace($"[0x{Handle:X}] RefreshIcon 开始", Cat);
         try
         {
             IntPtr hIcon = NativeMethods.SendMessage(Handle, NativeMethods.WM_GETICON,
@@ -141,9 +185,17 @@ public class ManagedWindow : INotifyPropertyChanged
                 Icon = Imaging.CreateBitmapSourceFromHIcon(
                     hIcon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
                 Icon.Freeze();
+                Logger.Trace($"[0x{Handle:X}] RefreshIcon 成功 hIcon=0x{hIcon:X}", Cat);
+            }
+            else
+            {
+                Logger.Trace($"[0x{Handle:X}] RefreshIcon: 未能获取图标。", Cat);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[0x{Handle:X}] RefreshIcon 异常: {ex.Message}", Cat);
+        }
     }
 
     public bool IsStillValid() => NativeMethods.IsWindowVisible(Handle);
@@ -153,9 +205,15 @@ public class ManagedWindow : INotifyPropertyChanged
         try
         {
             long style = NativeMethods.GetWindowLongSafe(Handle, NativeConstants.GWL_STYLE);
-            return style != 0 && NativeMethods.GetWindowRect(Handle, out _);
+            bool result = style != 0 && NativeMethods.GetWindowRect(Handle, out _);
+            Logger.Trace($"[0x{Handle:X}] CanWeControl = {result}", Cat);
+            return result;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[0x{Handle:X}] CanWeControl 异常: {ex.Message}", Cat);
+            return false;
+        }
     }
 
     private static string GetProcessPath(uint pid)
@@ -165,7 +223,7 @@ public class ManagedWindow : INotifyPropertyChanged
         if (hProc == IntPtr.Zero) return string.Empty;
         try
         {
-            var sb = new StringBuilder(1024);
+            var sb   = new StringBuilder(1024);
             uint size = 1024;
             return NativeMethods.QueryFullProcessImageName(hProc, 0, sb, ref size)
                 ? sb.ToString() : string.Empty;
@@ -177,7 +235,7 @@ public class ManagedWindow : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-    public override string ToString() => $"[{Handle}] {Title} ({ProcessName})";
-    public override int GetHashCode() => Handle.GetHashCode();
-    public override bool Equals(object? obj) => obj is ManagedWindow other && Handle == other.Handle;
+    public override string ToString()    => $"[{Handle}] {Title} ({ProcessName})";
+    public override int    GetHashCode() => Handle.GetHashCode();
+    public override bool   Equals(object? obj) => obj is ManagedWindow other && Handle == other.Handle;
 }
