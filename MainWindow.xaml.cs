@@ -25,7 +25,6 @@ public partial class MainWindow : Window
 
     // ── 覆盖层（拖拽已托管窗口时） ──
     private ReleaseZoneOverlay?    _releaseOverlay;     // 红色：拖至侧边栏释放
-    private SwapIndicatorOverlay?  _swapOverlay;        // 蓝色：目标槽位互换提示
 
     // ── 侧边栏状态 ──
     private bool   _sidebarExpanded    = true;
@@ -35,8 +34,7 @@ public partial class MainWindow : Window
     private Point _dragItemStartPoint;
     private bool  _isItemDragInProgress;
 
-    // ── 已托管窗口拖拽状态 ──
-    private int _currentHoverSlotIndex = -1;  // 当前鼠标悬停的槽位索引
+
 
     // ────────────────────────── 构造函数 ──────────────────────────
 
@@ -96,7 +94,6 @@ public partial class MainWindow : Window
 
         _overlay        = new DropZoneOverlay();
         _releaseOverlay = new ReleaseZoneOverlay();
-        _swapOverlay    = new SwapIndicatorOverlay();
 
         // 初始化宿主区域和放置区域
         Dispatcher.BeginInvoke(() => { UpdateHostArea(); UpdateDropZone(); });
@@ -113,7 +110,6 @@ public partial class MainWindow : Window
         _winEventHook.Dispose();
         _overlay?.Close();
         _releaseOverlay?.Close();
-        _swapOverlay?.Close();
     }
 
     private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -197,17 +193,6 @@ public partial class MainWindow : Window
 
     private void HideReleaseOverlay() => _releaseOverlay?.HideOverlay();
 
-    private void ShowSwapOverlayAtSlot(int slotIndex)
-    {
-        if (_swapOverlay == null) return;
-        var hostHwnd = new WindowInteropHelper(this).Handle;
-        var slotRect = _layout.GetSlotScreenRect(slotIndex, hostHwnd);
-        if (slotRect == Rect.Empty) return;
-        _swapOverlay.ShowAtRect(slotRect);
-    }
-
-    private void HideSwapOverlay() => _swapOverlay?.HideOverlay();
-
     // ────────────────────────── 外部拖拽检测回调 ──────────────────────────
 
     private void OnWindowDroppedInZone(IntPtr hwnd)
@@ -239,22 +224,8 @@ public partial class MainWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            // 只在非堆叠模式下显示互换相关 UI
-            bool isNonStacked = _layout.CurrentMode != LayoutService.LayoutMode.Stacked;
-
-            // 始终显示红色释放覆盖层（侧边栏）
             ShowReleaseOverlay();
-
-            _currentHoverSlotIndex = -1;
-
-            if (isNonStacked)
-            {
-                SetStatus("拖拽中 — 移至其他窗口槽位松开可互换位置，移至侧边栏松开可解除托管");
-            }
-            else
-            {
-                SetStatus("拖拽中 — 移至侧边栏松开可解除托管");
-            }
+            SetStatus("拖拽中 — 移至其他窗口槽位松开可互换位置，移至侧边栏松开可解除托管");
         });
     }
 
@@ -263,39 +234,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnManagedDragMoved(IntPtr hwnd, Point screenPt)
     {
-        Dispatcher.BeginInvoke(() =>
-        {
-            // 非堆叠模式下检测鼠标是否在其他窗口的槽位上
-            if (_layout.CurrentMode != LayoutService.LayoutMode.Stacked)
-            {
-                var hostHwnd = new WindowInteropHelper(this).Handle;
-                int hoverSlot = _layout.GetSlotIndexAtScreenPoint(screenPt, hostHwnd);
-
-                // 找到被拖拽窗口的槽位，排除自身
-                var draggedWindow = _windowManager.FindByHandle(hwnd);
-                if (draggedWindow != null && hoverSlot == draggedWindow.SlotIndex)
-                    hoverSlot = -1; // 悬停在自身槽位上，不显示互换提示
-
-                // 检查悬停的槽位是否有另一个窗口
-                if (hoverSlot >= 0)
-                {
-                    var targetWindow = _layout.GetWindowAtSlotIndex(hoverSlot);
-                    if (targetWindow == null || targetWindow.Handle == hwnd)
-                        hoverSlot = -1; // 槽位为空或是自己，不提示
-                }
-
-                if (hoverSlot != _currentHoverSlotIndex)
-                {
-                    _currentHoverSlotIndex = hoverSlot;
-                    if (hoverSlot >= 0)
-                        ShowSwapOverlayAtSlot(hoverSlot);
-                    else
-                        HideSwapOverlay();
-                }
-            }
-
-            UpdateDebugMousePos(screenPt);
-        });
+        Dispatcher.BeginInvoke(() => UpdateDebugMousePos(screenPt));
     }
 
     /// <summary>
@@ -370,12 +309,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnManagedDragEnded(IntPtr hwnd)
     {
-        Dispatcher.BeginInvoke(() =>
-        {
-            HideReleaseOverlay();
-            HideSwapOverlay();
-            _currentHoverSlotIndex = -1;
-        });
+        Dispatcher.BeginInvoke(() => HideReleaseOverlay());
     }
 
     /// <summary>

@@ -15,9 +15,6 @@
     <Compile Update="Controls\ReleaseZoneOverlay.xaml.cs">
       <DependentUpon>ReleaseZoneOverlay.xaml</DependentUpon>
     </Compile>
-    <Compile Update="Controls\SwapIndicatorOverlay.xaml.cs">
-      <DependentUpon>SwapIndicatorOverlay.xaml</DependentUpon>
-    </Compile>
   </ItemGroup>
 
 </Project>
