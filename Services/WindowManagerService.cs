@@ -191,11 +191,23 @@ public class WindowManagerService : IDisposable
                                | NativeConstants.WS_EX_TOPMOST);
             NativeMethods.SetWindowLongPtrSafe(hwnd, NativeConstants.GWL_EXSTYLE, exStyle);
 
+            // TemporaryUnembed 使用了 HWND_TOPMOST；在 SetParent 之前先用 HWND_NOTOPMOST
+            // 清除置顶 Z 序，否则 ExStyle 修改无法完全消除置顶效果
+            NativeMethods.SetWindowPos(hwnd, NativeConstants.HWND_NOTOPMOST, 0, 0, 0, 0,
+                NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE | NativeConstants.SWP_NOACTIVATE);
+
+            // 在 SetParent 之前先将屏幕坐标转换为宿主客户区坐标，
+            // 避免 SetParent 后位置值被误解为客户区坐标而产生偏移
+            NativeMethods.GetWindowRect(hwnd, out RECT screenRect);
+            var clientTL = new POINT { X = screenRect.Left, Y = screenRect.Top };
+            NativeMethods.ScreenToClient(HostHwnd, ref clientTL);
+
             NativeMethods.SetParent(hwnd, HostHwnd);
 
-            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
-                NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE
-                | NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
+            // 用换算后的正确客户区坐标定位，并触发 WM_NCCALCSIZE 更新非客户区
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero,
+                clientTL.X, clientTL.Y, screenRect.Width, screenRect.Height,
+                NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
 
             NativeMethods.ShowWindow(hwnd, NativeConstants.SW_SHOW);
 
@@ -297,7 +309,14 @@ public class WindowManagerService : IDisposable
     // ── 位置 / 激活 ──
 
     public void RepositionEmbedded(IntPtr hwnd, int x, int y, int width, int height)
-        => NativeMethods.MoveWindow(hwnd, x, y, width, height, true);
+    {
+        NativeMethods.MoveWindow(hwnd, x, y, width, height, true);
+        // 强制触发 WM_NCCALCSIZE，确保窗口重新计算非客户区与命中测试区域，
+        // 避免移动后标题栏判定位置停留在旧坐标
+        NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+            NativeConstants.SWP_NOMOVE | NativeConstants.SWP_NOSIZE |
+            NativeConstants.SWP_NOZORDER | NativeConstants.SWP_FRAMECHANGED);
+    }
 
     public void ActivateWindow(IntPtr hwnd)
     {
