@@ -5,21 +5,23 @@ using WindowPilot.Native;
 namespace WindowPilot.Services;
 
 /// <summary>
-/// 布局引擎：在宿主窗口内部计算嵌入窗口的位置
-/// 所有坐标都是相对于宿主客户区的像素坐标
+/// 布局引擎，在宿主窗口的客户区内计算并应用嵌入窗口的位置。
+/// 所有坐标均为相对于宿主客户区左上角的像素坐标。
 /// </summary>
 public class LayoutService
 {
     private const string Cat = "LayoutService";
 
+    // 可用布局模式
     public enum LayoutMode
     {
-        Stacked,
-        QuadSplit,
-        LeftRight,
-        TopBottom,
+        Stacked,    // 所有窗口叠放，一次只显示一个
+        QuadSplit,  // 四等分
+        LeftRight,  // 左右各半
+        TopBottom,  // 上下各半
     }
 
+    // 表示布局中单个位置区域的元数据
     public class LayoutSlot
     {
         public int    Index  { get; set; }
@@ -32,7 +34,7 @@ public class LayoutService
 
     private readonly WindowManagerService _windowManager;
     private LayoutMode _currentMode = LayoutMode.Stacked;
-    private int _applyCount;
+    private int        _applyCount;  // ApplyLayout 调用计数，用于日志追踪
 
     public LayoutMode CurrentMode
     {
@@ -42,18 +44,24 @@ public class LayoutService
             if (_currentMode == value) return;
             Logger.Info($"布局模式切换: {_currentMode} → {value}", Cat);
             _currentMode = value;
+            // 模式变化后立即重算槽位
             RecalculateSlots();
         }
     }
 
+    // 当前所有槽位的计算结果
     public List<LayoutSlot> Slots { get; private set; } = new();
 
-    /// <summary>宿主区域的像素矩形（相对于宿主客户区左上角）</summary>
+    // 宿主区域矩形（相对于宿主客户区，像素单位）
     public RECT HostArea { get; private set; }
 
-    /// <summary>窗口间距（像素）</summary>
+    // 相邻槽位之间的间隙（像素）
     public int Gap { get; set; } = 2;
 
+    /// <summary>
+    /// 构造布局服务，绑定到窗口管理器以读取托管窗口列表。
+    /// </summary>
+    /// <param name="windowManager">窗口管理服务实例，提供 ManagedWindows 列表和重排接口。</param>
     public LayoutService(WindowManagerService windowManager)
     {
         Logger.Debug("LayoutService 构造完成。", Cat);
@@ -61,8 +69,12 @@ public class LayoutService
     }
 
     /// <summary>
-    /// 设置宿主区域大小（像素，相对于宿主）
+    /// 更新宿主区域大小，触发槽位重算。在宿主 Panel 尺寸变化时调用。
     /// </summary>
+    /// <param name="x">区域左上角相对于宿主客户区的 X 坐标（像素）。</param>
+    /// <param name="y">区域左上角相对于宿主客户区的 Y 坐标（像素）。</param>
+    /// <param name="width">区域宽度（像素）。</param>
+    /// <param name="height">区域高度（像素）。</param>
     public void SetHostArea(int x, int y, int width, int height)
     {
         var oldArea = HostArea;
@@ -75,9 +87,7 @@ public class LayoutService
         RecalculateSlots();
     }
 
-    /// <summary>
-    /// 重新计算布局槽位
-    /// </summary>
+    // 根据当前模式和宿主区域重新计算所有槽位的坐标与尺寸
     public void RecalculateSlots()
     {
         int x = HostArea.Left;
@@ -97,11 +107,13 @@ public class LayoutService
         switch (_currentMode)
         {
             case LayoutMode.Stacked:
+                // 堆叠模式只有一个全区域槽位
                 Slots.Add(new LayoutSlot { Index = 0, Name = "堆叠",
                     X = x, Y = y, Width = w, Height = h });
                 break;
 
             case LayoutMode.QuadSplit:
+                // 四分区：宽高各减去一个间隙后对半分
                 int halfW = (w - g) / 2;
                 int halfH = (h - g) / 2;
                 Slots.Add(new LayoutSlot { Index = 0, Name = "左上",
@@ -139,9 +151,7 @@ public class LayoutService
                 $"({slot.X},{slot.Y}) {slot.Width}×{slot.Height}", Cat);
     }
 
-    /// <summary>
-    /// 应用布局：将嵌入窗口移动到对应槽位
-    /// </summary>
+    // 将托管窗口逐一移动到对应槽位，堆叠模式只显示活跃窗口
     public void ApplyLayout()
     {
         var windows = _windowManager.ManagedWindows.ToList();
@@ -160,18 +170,21 @@ public class LayoutService
         if (_currentMode == LayoutMode.Stacked)
         {
             var slot = Slots[0];
+            // 所有窗口都占满同一个槽位
             foreach (var win in windows)
             {
                 win.SlotIndex = 0;
                 _windowManager.RepositionEmbedded(win.Handle, slot.X, slot.Y, slot.Width, slot.Height);
             }
 
+            // 只显示激活窗口，其余隐藏
             var active = windows.FirstOrDefault(w => w.IsActive) ?? windows[0];
             Logger.Debug($"  堆叠模式 ShowOnly: \"{active.Title}\"", Cat);
             _windowManager.ShowOnly(active.Handle);
         }
         else
         {
+            // 非堆叠模式先全部显示，再按索引分配槽位
             _windowManager.ShowAll();
             for (int i = 0; i < windows.Count && i < Slots.Count; i++)
             {
@@ -183,6 +196,7 @@ public class LayoutService
                 _windowManager.RepositionEmbedded(win.Handle, slot.X, slot.Y, slot.Width, slot.Height);
             }
 
+            // 槽位数量不足时隐藏溢出窗口
             for (int i = Slots.Count; i < windows.Count; i++)
             {
                 Logger.Debug(
@@ -194,13 +208,20 @@ public class LayoutService
         Logger.Trace($"ApplyLayout #{applyId} 完成。", Cat);
     }
 
-    // ── 槽位查询 ──────────────────────────────────────────
+    // 槽位查询
 
+    /// <summary>
+    /// 将屏幕坐标转换为槽位索引，用于拖拽落点命中检测。
+    /// </summary>
+    /// <param name="screenPt">屏幕物理像素坐标。</param>
+    /// <param name="hostHwnd">宿主窗口句柄，用于坐标系转换。</param>
+    /// <returns>命中的槽位索引，未命中任何槽位时返回 -1。</returns>
     public int GetSlotIndexAtScreenPoint(System.Windows.Point screenPt, IntPtr hostHwnd)
     {
         if (hostHwnd == IntPtr.Zero || Slots.Count == 0)
             return -1;
 
+        // 将屏幕坐标转换为宿主客户区坐标
         var clientPt = new POINT { X = (int)screenPt.X, Y = (int)screenPt.Y };
         NativeMethods.ScreenToClient(hostHwnd, ref clientPt);
 
@@ -211,11 +232,18 @@ public class LayoutService
         return result;
     }
 
+    /// <summary>
+    /// 在宿主客户区坐标中命中测试，返回覆盖该点的槽位索引。
+    /// </summary>
+    /// <param name="clientX">相对于宿主客户区的 X 坐标。</param>
+    /// <param name="clientY">相对于宿主客户区的 Y 坐标。</param>
+    /// <returns>命中的槽位索引，未命中时返回 -1。</returns>
     public int GetSlotIndexAtClientPoint(int clientX, int clientY)
     {
         for (int i = 0; i < Slots.Count; i++)
         {
             var slot = Slots[i];
+            // 判断点是否在槽位矩形内（左闭右开区间）
             if (clientX >= slot.X && clientX < slot.X + slot.Width &&
                 clientY >= slot.Y && clientY < slot.Y + slot.Height)
                 return i;
@@ -223,6 +251,11 @@ public class LayoutService
         return -1;
     }
 
+    /// <summary>
+    /// 获取指定槽位索引上当前分配的托管窗口。
+    /// </summary>
+    /// <param name="slotIndex">槽位索引。</param>
+    /// <returns>该槽位的 <see cref="ManagedWindow"/>，索引越界时返回 null。</returns>
     public ManagedWindow? GetWindowAtSlotIndex(int slotIndex)
     {
         var windows = _windowManager.ManagedWindows;
@@ -231,12 +264,19 @@ public class LayoutService
         return windows[slotIndex];
     }
 
+    /// <summary>
+    /// 计算指定槽位在屏幕坐标系中的矩形，用于显示覆盖层或命中检测。
+    /// </summary>
+    /// <param name="slotIndex">目标槽位索引。</param>
+    /// <param name="hostHwnd">宿主窗口句柄，用于客户区到屏幕坐标的转换。</param>
+    /// <returns>槽位的屏幕坐标矩形，参数无效时返回 <see cref="System.Windows.Rect.Empty"/>。</returns>
     public System.Windows.Rect GetSlotScreenRect(int slotIndex, IntPtr hostHwnd)
     {
         if (slotIndex < 0 || slotIndex >= Slots.Count || hostHwnd == IntPtr.Zero)
             return System.Windows.Rect.Empty;
 
         var slot = Slots[slotIndex];
+        // 分别转换左上角和右下角，得到完整的屏幕矩形
         var tlPt = new POINT { X = slot.X, Y = slot.Y };
         NativeMethods.ClientToScreen(hostHwnd, ref tlPt);
         var brPt = new POINT { X = slot.X + slot.Width, Y = slot.Y + slot.Height };
@@ -251,13 +291,18 @@ public class LayoutService
         return result;
     }
 
-    // ── 切换 ──────────────────────────────────────────────
+    // 切换控制
 
+    /// <summary>
+    /// 切换到指定托管窗口，堆叠模式下仅显示该窗口，其他模式下激活它。
+    /// </summary>
+    /// <param name="window">要切换到的目标 <see cref="ManagedWindow"/>。</param>
     public void SwitchToWindow(ManagedWindow window)
     {
         Logger.Debug($"SwitchToWindow: \"{window.Title}\"  mode={_currentMode}", Cat);
         if (_currentMode == LayoutMode.Stacked)
         {
+            // 先将窗口移至槽位区域，再 ShowOnly 使其可见
             var slot = Slots.FirstOrDefault();
             if (slot != null)
                 _windowManager.RepositionEmbedded(window.Handle, slot.X, slot.Y, slot.Width, slot.Height);
@@ -269,24 +314,26 @@ public class LayoutService
         }
     }
 
+    // 切换到列表中的下一个托管窗口（循环）
     public void SwitchToNext()
     {
         var windows = _windowManager.ManagedWindows;
         if (windows.Count <= 1) return;
         var active = windows.FirstOrDefault(w => w.IsActive);
         int idx    = active != null ? windows.IndexOf(active) : -1;
-        int next   = (idx + 1) % windows.Count;
+        int next   = (idx + 1) % windows.Count; // 末尾回到头部
         Logger.Debug($"SwitchToNext: [{idx}] → [{next}]  \"{windows[next].Title}\"", Cat);
         SwitchToWindow(windows[next]);
     }
 
+    // 切换到列表中的上一个托管窗口（循环）
     public void SwitchToPrevious()
     {
         var windows = _windowManager.ManagedWindows;
         if (windows.Count <= 1) return;
         var active = windows.FirstOrDefault(w => w.IsActive);
         int idx    = active != null ? windows.IndexOf(active) : 0;
-        int prev   = (idx - 1 + windows.Count) % windows.Count;
+        int prev   = (idx - 1 + windows.Count) % windows.Count; // 头部回到末尾
         Logger.Debug($"SwitchToPrevious: [{idx}] → [{prev}]  \"{windows[prev].Title}\"", Cat);
         SwitchToWindow(windows[prev]);
     }

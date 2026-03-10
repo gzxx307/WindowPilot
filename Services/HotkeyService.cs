@@ -49,6 +49,7 @@ public class HotkeyService : IDisposable
         string description = "")
     {
         int id = _nextId++;
+        // 若描述为空则生成描述，否则使用原有的描述，用于支持自定义热键
         string name = string.IsNullOrEmpty(description)
             ? $"Mod={modifiers} VK=0x{virtualKey:X2}"
             : description;
@@ -79,6 +80,7 @@ public class HotkeyService : IDisposable
         _hotkeyNames.Remove(id);
     }
 
+    // 热键消息处理，分发到对应的回调
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == NativeConstants.WM_HOTKEY)
@@ -100,6 +102,7 @@ public class HotkeyService : IDisposable
         return IntPtr.Zero;
     }
 
+    // 注销所有热键并清理资源
     public void Dispose()
     {
         Logger.Debug($"HotkeyService.Dispose()  共注销 {_hotkeyActions.Count} 个热键", Cat);

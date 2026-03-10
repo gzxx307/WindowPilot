@@ -3,16 +3,19 @@ using System.Text;
 
 namespace WindowPilot.Native;
 
+/// <summary>
+/// Win32 API P/Invoke 声明及安全封装。所有直接调用系统 API 的入口均在此处集中定义。
+/// </summary>
 public static class NativeMethods
 {
-    // ── Delegates ──
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
-    public delegate void WinEventDelegate(
+    // 委托类型声明
+    public delegate bool    EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    public delegate IntPtr  LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+    public delegate void    WinEventDelegate(
         IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
         int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 
-    // ── Window Enumeration ──
+    // 窗口枚举
     [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
@@ -49,28 +52,35 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
-    // ── Window Style ──
+    // 窗口样式读写
     [DllImport("user32.dll")]
     public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll")]
     public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
-    // 64-bit safe versions
+    // 64 位版本，使用 IntPtr 支持 64 位指针宽度
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
     public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
     public static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
+    /// <summary>
+    /// 读取窗口的 Long 值，自动适配 32/64 位进程。
+    /// </summary>
+    /// <param name="hWnd">目标窗口句柄。</param>
+    /// <param name="nIndex">要读取的值的索引，使用 <see cref="NativeConstants"/> 中的 GWL_* 常量。</param>
+    /// <returns>读取到的样式值，失败时返回 0。</returns>
     public static long GetWindowLongSafe(IntPtr hWnd, int nIndex)
     {
+        // 根据指针大小选择对应 API
         if (IntPtr.Size == 8)
             return GetWindowLongPtr64(hWnd, nIndex).ToInt64();
         return GetWindowLong(hWnd, nIndex);
     }
 
-    // ── Window Position & Size ──
+    // 窗口位置与尺寸
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
@@ -99,20 +109,24 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
 
-    // ── Coordinate Conversion ──
+    // 坐标转换
     /// <summary>
-    /// 将屏幕坐标转换为指定窗口客户区坐标
+    /// 将屏幕坐标转换为指定窗口客户区的本地坐标。
     /// </summary>
+    /// <param name="hWnd">参考窗口句柄，定义客户区坐标系原点。</param>
+    /// <param name="lpPoint">输入屏幕坐标，转换后的结果也写入此结构。</param>
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
 
     /// <summary>
-    /// 将客户区坐标转换为屏幕坐标
+    /// 将指定窗口客户区坐标转换为屏幕坐标。
     /// </summary>
+    /// <param name="hWnd">参考窗口句柄，定义客户区坐标系原点。</param>
+    /// <param name="lpPoint">输入客户区坐标，转换后的结果也写入此结构。</param>
     [DllImport("user32.dll")]
     public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
-    // ── Window Info (Min/Max) ──
+    // 消息发送
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
@@ -122,7 +136,7 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
-    // ── Process Info ──
+    // 进程信息
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
@@ -136,7 +150,7 @@ public static class NativeMethods
     public static extern bool QueryFullProcessImageName(IntPtr hProcess, uint dwFlags,
         StringBuilder lpExeName, ref uint lpdwSize);
 
-    // ── Hooks ──
+    // 钩子安装与卸载
     [DllImport("user32.dll")]
     public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn,
         IntPtr hMod, uint dwThreadId);
@@ -150,7 +164,7 @@ public static class NativeMethods
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr GetModuleHandle(string? lpModuleName);
 
-    // ── WinEvent Hook ──
+    // WinEvent 钩子
     [DllImport("user32.dll")]
     public static extern IntPtr SetWinEventHook(
         uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
@@ -159,14 +173,14 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
 
-    // ── Hotkey ──
+    // 全局热键注册
     [DllImport("user32.dll")]
     public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll")]
     public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    // ── DWM (Desktop Window Manager) ──
+    // DWM 缩略图
     [DllImport("dwmapi.dll")]
     public static extern int DwmRegisterThumbnail(IntPtr hwndDestination, IntPtr hwndSource, out IntPtr phThumbnailId);
 
@@ -179,30 +193,33 @@ public static class NativeMethods
     [DllImport("dwmapi.dll")]
     public static extern int DwmQueryThumbnailSourceSize(IntPtr hThumbnailId, out SIZE pSize);
 
-    // ── Monitor Info ──
+    // 显示器信息
     [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
 
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
-    // ── Cursor ──
+    // 鼠标光标
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT lpPoint);
 
-    // ── Window from Point ──
+    // 点命中测试
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
-    /// <summary>
-    /// 返回指定点处的子窗口句柄（递归查找最深层子窗口）
-    /// </summary>
     [DllImport("user32.dll")]
     public static extern IntPtr ChildWindowFromPointEx(IntPtr hWndParent, POINT pt, uint uFlags);
 
-    // ── Window Reparenting ──
+    // 父窗口重设（窗口嵌入核心 API）
     [DllImport("user32.dll")]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
+    /// <summary>
+    /// 写入窗口的 Long 值，自动适配 32/64 位进程。
+    /// </summary>
+    /// <param name="hWnd">目标窗口句柄。</param>
+    /// <param name="nIndex">要写入的值的索引，使用 <see cref="NativeConstants"/> 中的 GWL_* 常量。</param>
+    /// <param name="dwNewLong">要设置的新值。</param>
     public static void SetWindowLongPtrSafe(IntPtr hWnd, int nIndex, long dwNewLong)
     {
         if (IntPtr.Size == 8)
@@ -211,15 +228,15 @@ public static class NativeMethods
             SetWindowLong(hWnd, nIndex, (int)dwNewLong);
     }
 
-    // ── DPI ──
+    // DPI 查询
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
 
-    // ── Keyboard state ──
+    // 键盘状态
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
 
-    // ── Misc ──
+    // 杂项
     [DllImport("user32.dll")]
     public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
@@ -232,22 +249,22 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool UpdateWindow(IntPtr hWnd);
 
-    // ── Icon extraction ──
+    // 图标提取
     [DllImport("user32.dll")]
     public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
 
-    public const int GCLP_HICON = -14;
-    public const int GCLP_HICONSM = -34;
+    public const int GCLP_HICON   = -14; // 类的大图标
+    public const int GCLP_HICONSM = -34; // 类的小图标
 
-    public const uint WM_GETICON = 0x007F;
-    public const int ICON_SMALL = 0;
-    public const int ICON_BIG = 1;
-    public const int ICON_SMALL2 = 2;
+    public const uint WM_GETICON  = 0x007F;
+    public const int  ICON_SMALL  = 0;
+    public const int  ICON_BIG    = 1;
+    public const int  ICON_SMALL2 = 2; // 任务栏使用的内部小图标
 
     [DllImport("user32.dll")]
     public static extern bool DestroyIcon(IntPtr hIcon);
 
-    // ── ReleaseCapture（用于编程式发起窗口拖拽） ──
+    // ReleaseCapture 用于配合 SC_MOVE 编程式发起窗口拖拽
     [DllImport("user32.dll")]
     public static extern bool ReleaseCapture();
 }
