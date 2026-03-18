@@ -170,6 +170,11 @@ public static class NativeMethods
         uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
         WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
 
+    // 获取指定父窗口的 Z-order 最顶层子窗口（截图前保存原始顶层，截图后还原用）
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetTopWindow(IntPtr hWnd);
+
+    
     [DllImport("user32.dll")]
     public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
 
@@ -213,6 +218,7 @@ public static class NativeMethods
     // 父窗口重设（窗口嵌入核心 API）
     [DllImport("user32.dll")]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+ 
 
     /// <summary>
     /// 写入窗口的 Long 值，自动适配 32/64 位进程。
@@ -267,4 +273,59 @@ public static class NativeMethods
     // ReleaseCapture 用于配合 SC_MOVE 编程式发起窗口拖拽
     [DllImport("user32.dll")]
     public static extern bool ReleaseCapture();
+
+    // ── GDI 截图（PrintWindow 回退方案）──
+
+    /// <summary>
+    /// 获取指定窗口（或屏幕）的设备上下文句柄。
+    /// 传 IntPtr.Zero 获取整个屏幕的 DC。
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDC(IntPtr hwnd);
+
+    /// <summary>
+    /// 释放 GetDC 获取的 DC。
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    /// <summary>
+    /// 创建与指定 DC 兼容的内存 DC，用于离屏绘制。
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    /// <summary>
+    /// 创建与指定 DC 兼容的位图，尺寸由 nWidth/nHeight 指定（物理像素）。
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+    /// <summary>
+    /// 将 GDI 对象（如 HBITMAP）选入 DC，返回被替换的旧对象句柄。
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+    /// <summary>
+    /// 删除 GDI 对象（HBITMAP、HPEN、HBRUSH 等），释放其占用的资源。
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr hObject);
+
+    /// <summary>
+    /// 删除由 CreateCompatibleDC 创建的内存 DC，释放资源。
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteDC(IntPtr hdc);
+
+    /// <summary>
+    /// 将窗口内容绘制到指定 DC。
+    /// <paramref name="nFlags"/> 传 <see cref="PW_RENDERFULLCONTENT"/> 可捕获 DirectX/GPU 加速内容。
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
+    /// <summary>PrintWindow 标志：渲染完整客户区内容，包含 DirectX/GPU 合成层。</summary>
+    public const uint PW_RENDERFULLCONTENT = 0x00000002;
 }

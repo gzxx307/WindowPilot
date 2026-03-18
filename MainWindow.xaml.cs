@@ -29,6 +29,17 @@ public partial class MainWindow : Window
     // 托管窗口拖拽时显示在侧边栏上方的红色解除提示覆盖层
     private ReleaseZoneOverlay? _releaseOverlay;
 
+    // 缩略图预览服务（鼠标悬停侧边栏条目时显示实时预览浮窗）
+    private ThumbnailPreviewService? _thumbnailPreview;
+
+    // 悬停防抖计时器：鼠标停留超过阈值后才真正显示预览，避免快速滑过时频繁弹出
+    private System.Windows.Threading.DispatcherTimer? _hoverTimer;
+
+    // 当前正在悬停的目标窗口及其屏幕坐标（由 SidebarItem_MouseEnter 更新）
+    private ManagedWindow? _hoverTarget;
+    private Point          _hoverItemScreenTL;   // 悬停条目左上角屏幕坐标
+    private double         _sidebarScreenRight;  // 侧边栏右边界屏幕 X 坐标
+
     // 侧边栏折叠状态
     private bool   _sidebarExpanded   = true;
     private double _savedSidebarWidth = 200; // 折叠前的侧边栏宽度，用于展开时恢复
@@ -143,6 +154,15 @@ public partial class MainWindow : Window
         _releaseOverlay = new ReleaseZoneOverlay();
         Logger.Debug("覆盖层窗口已创建: DropZone / ReleaseZone", Cat);
 
+        // 初始化缩略图预览服务
+        _thumbnailPreview = new ThumbnailPreviewService();
+
+        // 悬停防抖计时器：350ms 后触发预览，期间移走则取消
+        _hoverTimer          = new System.Windows.Threading.DispatcherTimer();
+        _hoverTimer.Interval = TimeSpan.FromMilliseconds(350);
+        _hoverTimer.Tick    += HoverTimer_Tick;
+        Logger.Debug("缩略图预览服务及悬停计时器已初始化。", Cat);
+
         // 延迟一帧后计算初始布局，确保控件尺寸已确定
         Dispatcher.BeginInvoke(() => { UpdateHostArea(); UpdateDropZone(); });
 
@@ -164,6 +184,11 @@ public partial class MainWindow : Window
 
         _hotkey.Dispose();
         Logger.Debug("HotkeyService 已释放。", Cat);
+
+        // 停止悬停计时器并释放缩略图预览
+        _hoverTimer?.Stop();
+        _thumbnailPreview?.Dispose();
+        Logger.Debug("ThumbnailPreviewService 已释放。", Cat);
 
         // ReleaseAll 会还原所有托管窗口，必须在 WinEventHook 停止前执行
         _windowManager.ReleaseAll();
@@ -836,6 +861,79 @@ public partial class MainWindow : Window
             return;
         }
         Dispatcher.BeginInvoke(() => _windowManager.TryManageWindow(hwnd));
+    }
+
+    // 缩略图预览交互
+
+    /// <summary>
+    /// 鼠标进入侧边栏条目时，记录目标及坐标，并启动防抖计时器。
+    /// 若计时器已运行（快速在条目间移动），则重置倒计时并更新目标。
+    /// </summary>
+    /// <param name="sender">被悬停的 <see cref="Border"/>，DataContext 为 <see cref="ManagedWindow"/>。</param>
+    /// <param name="e">鼠标事件参数。</param>
+    private void SidebarItem_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not ManagedWindow mw) return;
+
+        // 拖拽期间不显示预览，避免视觉干扰
+        if (_isItemDragInProgress) return;
+
+        _hoverTarget       = mw;
+        _hoverItemScreenTL = fe.PointToScreen(new Point(0, 0));
+        _sidebarScreenRight = SidebarBorder.PointToScreen(
+            new Point(SidebarBorder.ActualWidth, 0)).X;
+
+        // 重置计时器（保证每次悬停都等满防抖时间再弹出）
+        _hoverTimer?.Stop();
+        _hoverTimer?.Start();
+
+        Logger.Trace(
+            $"SidebarItem_MouseEnter: \"{mw.Title}\"  " +
+            $"screenTL=({_hoverItemScreenTL.X:F0},{_hoverItemScreenTL.Y:F0})", Cat);
+    }
+
+    /// <summary>
+    /// 鼠标离开单个条目时不立即隐藏预览（可能只是移向相邻条目）；
+    /// 由 <see cref="WindowListBox_MouseLeave"/> 在彻底离开列表时统一隐藏。
+    /// </summary>
+    private void SidebarItem_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        // 无需操作：只要鼠标还在 ListBox 范围内，预览应保持可见。
+        // 完全离开列表后 WindowListBox_MouseLeave 会负责清理。
+    }
+
+    /// <summary>
+    /// 鼠标完全离开窗口列表时，停止防抖计时器并隐藏预览浮窗。
+    /// </summary>
+    private void WindowListBox_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        Logger.Trace("WindowListBox_MouseLeave → 停止计时器 + 隐藏预览", Cat);
+        _hoverTimer?.Stop();
+        _hoverTarget = null;
+        _thumbnailPreview?.Hide();
+    }
+
+    /// <summary>
+    /// 防抖计时器触发时，显示当前悬停目标的缩略图预览。
+    /// 计时器为单次触发（Tick 后立即停止）。
+    /// </summary>
+    private void HoverTimer_Tick(object? sender, EventArgs e)
+    {
+        // 计时器是持续触发的 DispatcherTimer，手动停止使其仅触发一次
+        _hoverTimer?.Stop();
+
+        if (_hoverTarget == null || _thumbnailPreview == null) return;
+
+        // 从 PresentationSource 读取 DPI 缩放比例
+        // PointToScreen 返回物理像素，Window.Left/Top 需要逻辑像素，必须换算
+        var source   = PresentationSource.FromVisual(this);
+        double dpiScale = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+
+        Logger.Debug(
+            $"HoverTimer 触发 → 显示预览: \"{_hoverTarget.Title}\"  " +
+            $"dpiScale={dpiScale:F2}  sidebarRight={_sidebarScreenRight:F0}", Cat);
+
+        _thumbnailPreview.Show(_hoverTarget, _hoverItemScreenTL, _sidebarScreenRight, dpiScale);
     }
 
     // UI 辅助
