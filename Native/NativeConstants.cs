@@ -80,6 +80,8 @@ public static class NativeConstants
     public const int WM_HOTKEY        = 0x0312;
     public const int WM_SYSCOMMAND    = 0x0112;
     public const int WM_KEYDOWN       = 0x0100;
+    // 父窗口收到子窗口的点击通知
+    public const int WM_PARENTNOTIFY  = 0x0210;
 
     // SC_MOVE 用于编程式发起窗口拖拽
     public const int SC_MOVE = 0xF010;

@@ -476,20 +476,46 @@ public class WindowManagerService : IDisposable
 
     /// <summary>
     /// 将指定窗口提到前台并更新 IsActive 标志。
+    /// 使用 <see cref="FocusEmbeddedWindow"/> 确保跨进程焦点生效。
     /// </summary>
     /// <param name="hwnd">要激活的托管窗口句柄。</param>
     public void ActivateWindow(IntPtr hwnd)
     {
         Logger.Debug($"ActivateWindow hwnd=0x{hwnd:X}", Cat);
-        NativeMethods.BringWindowToTop(hwnd);
-        NativeMethods.SetFocus(hwnd);
-        // 更新所有窗口的激活标志
+        FocusEmbeddedWindow(hwnd);                          // ← 替换原来的 BringWindowToTop + SetFocus
         foreach (var w in ManagedWindows)
             w.IsActive = w.Handle == hwnd;
+    }
+    
+    /// <summary>
+    /// 将键盘焦点安全地转移到嵌入窗口。
+    /// 跨进程嵌入时，必须先通过 <see cref="NativeMethods.AttachThreadInput"/> 临时
+    /// 合并两个线程的输入队列，否则 <see cref="NativeMethods.SetFocus"/> 会被静默忽略。
+    /// </summary>
+    /// <param name="hwnd">要获得焦点的嵌入窗口句柄。</param>
+    public void FocusEmbeddedWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+ 
+        uint targetTid  = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
+        uint selfTid    = NativeMethods.GetCurrentThreadId();
+        bool attached   = targetTid != selfTid &&
+                          NativeMethods.AttachThreadInput(selfTid, targetTid, true);
+ 
+        Logger.Trace(
+            $"FocusEmbeddedWindow hwnd=0x{hwnd:X}  targetTid={targetTid}  " +
+            $"selfTid={selfTid}  attached={attached}", Cat);
+ 
+        NativeMethods.BringWindowToTop(hwnd);
+        NativeMethods.SetFocus(hwnd);
+ 
+        if (attached)
+            NativeMethods.AttachThreadInput(selfTid, targetTid, false);
     }
 
     /// <summary>
     /// 只显示指定窗口，隐藏其余所有托管窗口，用于堆叠模式的切换。
+    /// 显示后调用 <see cref="FocusEmbeddedWindow"/> 确保键盘焦点跟随。
     /// </summary>
     /// <param name="hwnd">要显示的托管窗口句柄。</param>
     public void ShowOnly(IntPtr hwnd)
@@ -500,7 +526,6 @@ public class WindowManagerService : IDisposable
             if (w.Handle == hwnd)
             {
                 NativeMethods.ShowWindow(w.Handle, NativeConstants.SW_SHOW);
-                NativeMethods.BringWindowToTop(w.Handle);
                 w.IsActive = true;
             }
             else
@@ -509,6 +534,7 @@ public class WindowManagerService : IDisposable
                 w.IsActive = false;
             }
         }
+        FocusEmbeddedWindow(hwnd);
     }
 
     // 显示所有托管窗口，用于切换到多窗口布局模式

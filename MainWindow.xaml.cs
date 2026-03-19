@@ -169,6 +169,10 @@ public partial class MainWindow : Window
         Logger.Info("MainWindow 已加载完毕，程序就绪。", Cat);
         Logger.Debug($"日志文件位置: {Logger.CurrentLogFilePath}", Cat);
 
+        var hwndSource = HwndSource.FromHwnd(_windowManager.HostHwnd);
+        hwndSource?.AddHook(HostWndProc);
+        Logger.Info("HostWndProc 钩子已安装。", Cat);
+        
         SetStatus("就绪 — 拖拽窗口到侧边栏以接管，或按 Ctrl+Alt+G 抓取当前窗口 │ Ctrl+Alt+M 拖拽移动窗口");
     }
 
@@ -934,6 +938,71 @@ public partial class MainWindow : Window
             $"dpiScale={dpiScale:F2}  sidebarRight={_sidebarScreenRight:F0}", Cat);
 
         _thumbnailPreview.Show(_hoverTarget, _hoverItemScreenTL, _sidebarScreenRight, dpiScale);
+    }
+    
+    // 焦点修复
+ 
+    /// <summary>
+    /// 宿主窗口的 WndProc 钩子。
+    /// 拦截 <c>WM_PARENTNOTIFY(WM_LBUTTONDOWN)</c>：当用户点击任意嵌入子窗口时，
+    /// 立即调用 <see cref="WindowManagerService.FocusEmbeddedWindow"/> 将键盘焦点
+    /// 转移到该子窗口，解决跨进程嵌入后无法键盘输入的问题。
+    /// </summary>
+    private IntPtr HostWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == NativeConstants.WM_PARENTNOTIFY)
+        {
+            // WM_PARENTNOTIFY 的 wParam 低字节是子消息类型
+            int childMsg = wParam.ToInt32() & 0xFFFF;
+            if (childMsg == NativeConstants.WM_LBUTTONDOWN)
+            {
+                // lParam 包含鼠标在宿主客户区的坐标（物理像素）
+                int clientX = (short)(lParam.ToInt64() & 0xFFFF);
+                int clientY = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+ 
+                // 找出该坐标下被点击的托管窗口
+                var target = FindManagedWindowAtClientPoint(clientX, clientY);
+                if (target != null)
+                {
+                    Logger.Debug(
+                        $"WM_PARENTNOTIFY click → FocusEmbedded: \"{target.Title}\"  " +
+                        $"client=({clientX},{clientY})", Cat);
+                    _windowManager.FocusEmbeddedWindow(target.Handle);
+ 
+                    // 同步激活状态
+                    foreach (var w in _windowManager.ManagedWindows)
+                        w.IsActive = w.Handle == target.Handle;
+                }
+            }
+        }
+        return IntPtr.Zero;
+    }
+ 
+    /// <summary>
+    /// 根据宿主客户区坐标，向上遍历窗口父链，找到对应的托管窗口。
+    /// 嵌入窗口内部可能有多层子控件（如文本框、标签页等），需要逐级向上查找。
+    /// </summary>
+    /// <param name="clientX">宿主客户区 X 坐标（物理像素）。</param>
+    /// <param name="clientY">宿主客户区 Y 坐标（物理像素）。</param>
+    /// <returns>找到的托管窗口，未找到时返回 null。</returns>
+    private ManagedWindow? FindManagedWindowAtClientPoint(int clientX, int clientY)
+    {
+        // 将宿主客户区坐标转换为屏幕坐标，再用 WindowFromPoint 定位实际被点击的 HWND
+        var pt = new POINT { X = clientX, Y = clientY };
+        NativeMethods.ClientToScreen(_windowManager.HostHwnd, ref pt);
+        IntPtr clickedHwnd = NativeMethods.WindowFromPoint(pt);
+ 
+        if (clickedHwnd == IntPtr.Zero) return null;
+ 
+        // 向上遍历父链，直到找到托管窗口或到达宿主
+        IntPtr current = clickedHwnd;
+        while (current != IntPtr.Zero && current != _windowManager.HostHwnd)
+        {
+            var managed = _windowManager.FindByHandle(current);
+            if (managed != null) return managed;
+            current = NativeMethods.GetParent(current);
+        }
+        return null;
     }
 
     // UI 辅助
