@@ -514,26 +514,20 @@ public class WindowManagerService : IDisposable
     }
 
     /// <summary>
-    /// 只显示指定窗口，隐藏其余所有托管窗口，用于堆叠模式的切换。
-    /// 显示后调用 <see cref="FocusEmbeddedWindow"/> 确保键盘焦点跟随。
+    /// 只显示指定窗口（堆叠模式用）。
     /// </summary>
-    /// <param name="hwnd">要显示的托管窗口句柄。</param>
+    /// <param name="hwnd">要置顶显示的托管窗口句柄。</param>
     public void ShowOnly(IntPtr hwnd)
     {
         Logger.Debug($"ShowOnly hwnd=0x{hwnd:X}", Cat);
         foreach (var w in ManagedWindows)
         {
-            if (w.Handle == hwnd)
-            {
-                NativeMethods.ShowWindow(w.Handle, NativeConstants.SW_SHOW);
-                w.IsActive = true;
-            }
-            else
-            {
-                NativeMethods.ShowWindow(w.Handle, 0); // SW_HIDE
-                w.IsActive = false;
-            }
+            NativeMethods.ShowWindow(w.Handle, NativeConstants.SW_SHOW);
+            w.IsActive = w.Handle == hwnd;
         }
+        // 将活跃窗口提到最顶层，视觉上遮盖其他窗口
+        NativeMethods.BringWindowToTop(hwnd);
+        // 确保键盘焦点也跟随
         FocusEmbeddedWindow(hwnd);
     }
 
