@@ -340,14 +340,32 @@ public partial class MainWindow : Window
     private void OnWindowDroppedInZone(IntPtr hwnd)
     {
         Logger.Info($"OnWindowDroppedInZone  hwnd=0x{hwnd:X}", Cat);
+
+        bool hasPre = _dragDetection.PreDragRects.TryGetValue(hwnd, out RECT preDragRect);
+        Logger.Debug(hasPre
+            ? $"  PreDragRect 捕获成功: ({preDragRect.Left},{preDragRect.Top},{preDragRect.Width}×{preDragRect.Height})"
+            : "  PreDragRect 未找到（将使用 SaveOriginalState 记录的位置）", Cat);
+
         Dispatcher.BeginInvoke(() =>
         {
             _windowManager.TryManageWindow(hwnd);
-            // TryManageWindow 成功后将句柄加入检测集合
             _dragDetection.ManagedWindows.Add(hwnd);
+
+            // hasPre / preDragRect 已在外部同步捕获，此处直接使用
+            if (hasPre)
+            {
+                var window = _windowManager.FindByHandle(hwnd);
+                if (window != null)
+                {
+                    window.OriginalRect = preDragRect;
+                    Logger.Debug(
+                        $"  OriginalRect 已更正为拖拽前位置: " +
+                        $"({preDragRect.Left},{preDragRect.Top},{preDragRect.Width}×{preDragRect.Height})", Cat);
+                }
+            }
         });
     }
-
+ 
     /// <summary>
     /// 已托管窗口通过 MoveSize 事件被拖出管理区域，解除其托管。
     /// </summary>

@@ -26,7 +26,14 @@ public class DragDetectionService : IDisposable
     // 拖拽跟踪统计
     private int _moveTickCount;    // 当前会话的 Tick 累计数
     private int _dragSessionCount; // 历史拖拽会话总数
-
+    /// <summary>
+    /// 记录外部窗口在拖拽开始瞬间（尚未移动时）的屏幕位置。
+    /// 键为窗口句柄，值为 GetWindowRect 的结果。
+    /// 托管成功后由 MainWindow 读取并写入 ManagedWindow.OriginalRect，之后删除条目。
+    /// </summary>
+    public Dictionary<IntPtr, RECT> PreDragRects { get; } = new();
+    
+    
     // 外部窗口拖入事件
     public event Action<IntPtr>?        ExternalDragStarted;    // 外部窗口开始被拖拽
     public event Action<IntPtr, Point>? DragMoved;              // 拖拽中光标位置更新（物理像素）
@@ -126,6 +133,16 @@ public class DragDetectionService : IDisposable
         _draggingWindow = hwnd;
         _isManagedDrag  = false;
         _moveTickCount  = 0;
+
+        // 在拖拽刚开始（窗口尚未被移动）时立即快照位置，
+        // 供托管成功后写入 OriginalRect，避免 Windows 松手时先移动窗口导致位置错误
+        if (NativeMethods.GetWindowRect(hwnd, out RECT preDragRect))
+        {
+            PreDragRects[hwnd] = preDragRect;
+            Logger.Debug(
+                $"  PreDragRect 已记录: ({preDragRect.Left},{preDragRect.Top}," +
+                $"{preDragRect.Width}×{preDragRect.Height})", Cat);
+        }
 
         ExternalDragStarted?.Invoke(hwnd);
 
@@ -250,6 +267,9 @@ public class DragDetectionService : IDisposable
         {
             Logger.Debug($"外部窗口 0x{hwnd:X} 拖拽结束，无区域匹配变化。", Cat);
         }
+
+        // 无论是否托管，拖拽结束后都清理预存的位置快照
+        PreDragRects.Remove(hwnd);
 
         DragEnded?.Invoke(hwnd);
     }
