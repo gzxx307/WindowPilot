@@ -22,7 +22,8 @@ public partial class MainWindow : Window
     private readonly DragDetectionService _dragDetection;
     private readonly LayoutService        _layout;
     private readonly HotkeyService        _hotkey        = new();
-
+    private readonly AppSettingsService   _appSettings   = new();
+    
     // 外部窗口拖入时显示在侧边栏上方的蓝色提示覆盖层
     private DropZoneOverlay?    _overlay;
 
@@ -164,8 +165,19 @@ public partial class MainWindow : Window
         Logger.Debug("缩略图预览服务及悬停计时器已初始化。", Cat);
 
         // 延迟一帧后计算初始布局，确保控件尺寸已确定
-        Dispatcher.BeginInvoke(() => { UpdateHostArea(); UpdateDropZone(); });
-
+        Dispatcher.BeginInvoke(() =>
+        {
+            UpdateHostArea();
+            UpdateDropZone();
+ 
+            // 恢复上次退出时的布局模式；在 UpdateHostArea 之后执行，
+            // 确保 HostArea / Slots 已完成初始计算。
+            _appSettings.Load();
+            var savedMode = _appSettings.Settings.LastLayoutMode;
+            Logger.Info($"恢复布局模式：{savedMode}", Cat);
+            SetLayoutMode(savedMode);
+        });
+        
         Logger.Info("MainWindow 已加载完毕，程序就绪。", Cat);
         Logger.Debug($"日志文件位置: {Logger.CurrentLogFilePath}", Cat);
 
@@ -744,7 +756,12 @@ public partial class MainWindow : Window
         _layout.ApplyLayout();
         HighlightLayoutButton(mode);
         SetStatus($"布局模式：{GetLayoutName(mode)}");
+ 
+        // 每次切换布局后立即写盘，下次启动时恢复
+        _appSettings.Settings.LastLayoutMode = mode;
+        _appSettings.Save();
     }
+
 
     /// <summary>
     /// 更新工具栏布局模式按钮的激活高亮，当前模式按钮显示强调色。
