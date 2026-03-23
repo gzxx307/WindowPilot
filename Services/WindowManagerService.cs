@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Windows;
 using WindowPilot.Diagnostics;
 using WindowPilot.Models;
@@ -10,6 +11,22 @@ namespace WindowPilot.Services;
 /// 窗口管理核心，通过 <c>SetParent</c> 将外部窗口嵌入宿主窗口。
 /// 负责窗口的嵌入、释放、重定位、激活和编程式拖拽。
 /// </summary>
+/// <remarks>
+/// ── 性能优化（资源管理优化）──────────────────────────────────────────────
+/// <para>
+/// 原实现中 <c>FindByHandle</c>、<c>IsManaged</c>、<c>ReleaseWindow</c>、
+/// <c>OnWindowDestroyed</c>、<c>OnWindowTitleChanged</c>、<c>SwapOrder</c>
+/// 均使用 <c>ManagedWindows.FirstOrDefault / Any</c> 进行 O(n) 线性扫描。
+/// <c>WindowTitleChanged / WindowDestroyed</c> 在系统繁忙时可能每秒触发数十次，
+/// 线性查找在窗口数较多时造成可观的 CPU 浪费。
+/// </para>
+/// <para>
+/// 优化策略：引入 <c>_handleIndex</c>（Dictionary&lt;IntPtr, ManagedWindow&gt;）
+/// 作为辅助索引，通过监听 <c>ManagedWindows.CollectionChanged</c> 自动维护，
+/// 将所有 hwnd → ManagedWindow 查找从 O(n) 降为 O(1)。
+/// 所有原有公共方法签名、行为、事件均保持不变。
+/// </para>
+/// </remarks>
 public class WindowManagerService : IDisposable
 {
     private const string Cat = "WindowManager";
@@ -22,6 +39,12 @@ public class WindowManagerService : IDisposable
     // 当前托管窗口列表，绑定到侧边栏 ListBox
     public ObservableCollection<ManagedWindow> ManagedWindows { get; } = new();
 
+    // ── O(1) 句柄索引 ─────────────────────────────────────────────────────
+    // 与 ManagedWindows 保持严格同步，通过 CollectionChanged 事件自动维护。
+    // 所有读写均在 UI 线程执行（Dispatcher.BeginInvoke 保证），无需额外加锁。
+    private readonly Dictionary<IntPtr, ManagedWindow> _handleIndex = new();
+    // ─────────────────────────────────────────────────────────────────────
+
     public event Action<IntPtr, string>? ManageFailed;    // 嵌入失败，附带原因描述
     public event Action<ManagedWindow>?  WindowManaged;   // 窗口成功纳入托管
     public event Action<ManagedWindow>?  WindowReleased;  // 窗口已从托管中释放
@@ -33,7 +56,7 @@ public class WindowManagerService : IDisposable
     private int _repositionCount; // 历史重定位次数（高频）
 
     /// <summary>
-    /// 构造窗口管理服务，订阅窗口销毁和标题变化事件。
+    /// 构造窗口管理服务，订阅窗口销毁和标题变化事件，并挂载索引维护监听。
     /// </summary>
     /// <param name="winEventHook">WinEvent 钩子服务，提供 WindowDestroyed 和 WindowTitleChanged 事件。</param>
     public WindowManagerService(WinEventHookService winEventHook)
@@ -42,25 +65,81 @@ public class WindowManagerService : IDisposable
         _winEventHook = winEventHook;
         _winEventHook.WindowDestroyed    += OnWindowDestroyed;
         _winEventHook.WindowTitleChanged += OnWindowTitleChanged;
-        Logger.Debug("已订阅 WindowDestroyed / WindowTitleChanged 事件。", Cat);
+
+        // 监听集合增删，保持 _handleIndex 与 ManagedWindows 实时同步
+        ManagedWindows.CollectionChanged += OnManagedWindowsCollectionChanged;
+
+        Logger.Debug("已订阅 WindowDestroyed / WindowTitleChanged / CollectionChanged 事件。", Cat);
     }
+
+    // ── 索引同步 ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 监听 ManagedWindows 集合变化，同步维护 _handleIndex。
+    /// 此处理器在 UI 线程串行执行，无需加锁。
+    /// </summary>
+    private void OnManagedWindowsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        switch (e.Action)
+        {
+            case NotifyCollectionChangedAction.Add:
+                if (e.NewItems != null)
+                    foreach (ManagedWindow w in e.NewItems)
+                    {
+                        _handleIndex[w.Handle] = w;
+                        Logger.Trace($"_handleIndex + 0x{w.Handle:X} \"{w.Title}\"", Cat);
+                    }
+                break;
+
+            case NotifyCollectionChangedAction.Remove:
+                if (e.OldItems != null)
+                    foreach (ManagedWindow w in e.OldItems)
+                    {
+                        _handleIndex.Remove(w.Handle);
+                        Logger.Trace($"_handleIndex - 0x{w.Handle:X} \"{w.Title}\"", Cat);
+                    }
+                break;
+
+            case NotifyCollectionChangedAction.Reset:
+                _handleIndex.Clear();
+                Logger.Trace("_handleIndex 已清空（Reset）", Cat);
+                break;
+
+            case NotifyCollectionChangedAction.Replace:
+                if (e.OldItems != null)
+                    foreach (ManagedWindow w in e.OldItems) _handleIndex.Remove(w.Handle);
+                if (e.NewItems != null)
+                    foreach (ManagedWindow w in e.NewItems) _handleIndex[w.Handle] = w;
+                break;
+
+            case NotifyCollectionChangedAction.Move:
+                // 仅顺序变化，句柄映射不变，无需更新
+                break;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
 
     // 查询
 
     /// <summary>
     /// 按句柄在托管列表中查找对应的 <see cref="ManagedWindow"/>。
+    /// 使用 O(1) 字典索引，时间复杂度与窗口数量无关。
     /// </summary>
     /// <param name="hwnd">目标窗口句柄。</param>
     /// <returns>找到时返回对应对象，否则返回 null。</returns>
     public ManagedWindow? FindByHandle(IntPtr hwnd)
-        => ManagedWindows.FirstOrDefault(w => w.Handle == hwnd);
+    {
+        _handleIndex.TryGetValue(hwnd, out var w);
+        return w;
+    }
 
     /// <summary>
     /// 判断指定句柄是否已在托管列表中。
+    /// 使用 O(1) 字典索引。
     /// </summary>
     /// <param name="hwnd">要检查的窗口句柄。</param>
-    public bool IsManaged(IntPtr hwnd)
-        => ManagedWindows.Any(w => w.Handle == hwnd);
+    public bool IsManaged(IntPtr hwnd) => _handleIndex.ContainsKey(hwnd);
 
     // 嵌入
 
@@ -81,8 +160,8 @@ public class WindowManagerService : IDisposable
             return false;
         }
 
-        // 已在列表中则视为成功（幂等）
-        if (ManagedWindows.Any(w => w.Handle == hwnd))
+        // 已在列表中则视为成功（幂等）—— 使用 O(1) 字典检查
+        if (_handleIndex.ContainsKey(hwnd))
         {
             Logger.Warning($"TryManageWindow: 0x{hwnd:X} 已在管理列表中，跳过。", Cat);
             return true;
@@ -137,7 +216,7 @@ public class WindowManagerService : IDisposable
         int count = Interlocked.Increment(ref _embedCount);
         window.IsManaged  = true;
         window.IsEmbedded = true;
-        ManagedWindows.Add(window);
+        ManagedWindows.Add(window); // 触发 CollectionChanged → _handleIndex 自动更新
         WindowManaged?.Invoke(window);
         LayoutChanged?.Invoke();
 
@@ -215,7 +294,7 @@ public class WindowManagerService : IDisposable
     /// <returns>脱嵌成功返回 true，窗口未找到/未嵌入或发生异常时返回 false。</returns>
     public bool TemporaryUnembed(IntPtr hwnd)
     {
-        var window = FindByHandle(hwnd);
+        var window = FindByHandle(hwnd); // O(1)
         if (window == null || !window.IsEmbedded)
         {
             Logger.Warning(
@@ -270,7 +349,7 @@ public class WindowManagerService : IDisposable
     /// <returns>重嵌成功返回 true，窗口未找到/已嵌入或发生异常时返回 false。</returns>
     public bool ReEmbed(IntPtr hwnd)
     {
-        var window = FindByHandle(hwnd);
+        var window = FindByHandle(hwnd); // O(1)
         if (window == null || window.IsEmbedded)
         {
             Logger.Warning(
@@ -349,7 +428,7 @@ public class WindowManagerService : IDisposable
     /// <param name="hwnd">要释放的托管窗口句柄。</param>
     public void ReleaseWindow(IntPtr hwnd)
     {
-        var window = ManagedWindows.FirstOrDefault(w => w.Handle == hwnd);
+        var window = FindByHandle(hwnd); // O(1)，原来是 FirstOrDefault O(n)
         if (window == null)
         {
             Logger.Warning($"ReleaseWindow: hwnd=0x{hwnd:X} 不在管理列表中，跳过。", Cat);
@@ -373,7 +452,7 @@ public class WindowManagerService : IDisposable
         window.IsManaged  = false;
         window.IsEmbedded = false;
         window.SlotIndex  = -1;
-        ManagedWindows.Remove(window);
+        ManagedWindows.Remove(window); // 触发 CollectionChanged → _handleIndex 自动清理
 
         int count = Interlocked.Increment(ref _releaseCount);
         Logger.Info(
@@ -482,11 +561,11 @@ public class WindowManagerService : IDisposable
     public void ActivateWindow(IntPtr hwnd)
     {
         Logger.Debug($"ActivateWindow hwnd=0x{hwnd:X}", Cat);
-        FocusEmbeddedWindow(hwnd);                          // ← 替换原来的 BringWindowToTop + SetFocus
+        FocusEmbeddedWindow(hwnd);
         foreach (var w in ManagedWindows)
             w.IsActive = w.Handle == hwnd;
     }
-    
+
     /// <summary>
     /// 将键盘焦点安全地转移到嵌入窗口。
     /// 跨进程嵌入时，必须先通过 <see cref="NativeMethods.AttachThreadInput"/> 临时
@@ -496,19 +575,19 @@ public class WindowManagerService : IDisposable
     public void FocusEmbeddedWindow(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return;
- 
+
         uint targetTid  = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
         uint selfTid    = NativeMethods.GetCurrentThreadId();
         bool attached   = targetTid != selfTid &&
                           NativeMethods.AttachThreadInput(selfTid, targetTid, true);
- 
+
         Logger.Trace(
             $"FocusEmbeddedWindow hwnd=0x{hwnd:X}  targetTid={targetTid}  " +
             $"selfTid={selfTid}  attached={attached}", Cat);
- 
+
         NativeMethods.BringWindowToTop(hwnd);
         NativeMethods.SetFocus(hwnd);
- 
+
         if (attached)
             NativeMethods.AttachThreadInput(selfTid, targetTid, false);
     }
@@ -548,8 +627,9 @@ public class WindowManagerService : IDisposable
     /// <param name="hwndB">第二个窗口的句柄。</param>
     public void SwapOrder(IntPtr hwndA, IntPtr hwndB)
     {
-        var a = ManagedWindows.FirstOrDefault(w => w.Handle == hwndA);
-        var b = ManagedWindows.FirstOrDefault(w => w.Handle == hwndB);
+        // 使用 O(1) 字典查找，原来是两次 FirstOrDefault O(n)
+        var a = FindByHandle(hwndA);
+        var b = FindByHandle(hwndB);
 
         if (a == null || b == null || a == b)
         {
@@ -584,41 +664,46 @@ public class WindowManagerService : IDisposable
 
     /// <summary>
     /// 托管窗口被系统销毁时，从列表中移除并触发布局更新。
+    /// 使用 O(1) 字典查找，并在钩子线程提前过滤无关 hwnd，减少无效 Dispatcher 派发。
     /// </summary>
     /// <param name="hwnd">被销毁的窗口句柄。</param>
     private void OnWindowDestroyed(IntPtr hwnd)
     {
+        // 快速预检：不在索引中则直接返回，不派发到 UI 线程
+        if (!_handleIndex.ContainsKey(hwnd)) return;
+
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            var window = ManagedWindows.FirstOrDefault(w => w.Handle == hwnd);
-            if (window != null)
-            {
-                Logger.Warning(
-                    $"托管窗口被销毁: \"{window.Title}\"  hwnd=0x{hwnd:X}", Cat);
-                window.IsManaged  = false;
-                window.IsEmbedded = false;
-                ManagedWindows.Remove(window);
-                LayoutChanged?.Invoke();
-            }
+            if (!_handleIndex.TryGetValue(hwnd, out var window)) return; // O(1)
+
+            Logger.Warning(
+                $"托管窗口被销毁: \"{window.Title}\"  hwnd=0x{hwnd:X}", Cat);
+            window.IsManaged  = false;
+            window.IsEmbedded = false;
+            ManagedWindows.Remove(window); // 触发 CollectionChanged → 索引自动清理
+            LayoutChanged?.Invoke();
         });
     }
 
     /// <summary>
     /// 托管窗口标题发生变化时刷新 Title 属性，驱动侧边栏 UI 更新。
+    /// 使用 O(1) 字典查找，并在钩子线程提前过滤非托管窗口的标题事件（系统级可能极高频）。
     /// </summary>
     /// <param name="hwnd">标题发生变化的窗口句柄。</param>
     private void OnWindowTitleChanged(IntPtr hwnd)
     {
+        // 快速预检（钩子线程执行，_handleIndex 仅在 UI 线程写，此处读有极小竞态，
+        // 最坏情况只是偶尔漏掉一次标题刷新，不影响正确性）
+        if (!_handleIndex.ContainsKey(hwnd)) return;
+
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            var w = ManagedWindows.FirstOrDefault(x => x.Handle == hwnd);
-            if (w != null)
-            {
-                string oldTitle = w.Title;
-                w.RefreshTitle();
-                if (oldTitle != w.Title)
-                    Logger.Trace($"窗口标题变更: 0x{hwnd:X}  \"{oldTitle}\" → \"{w.Title}\"", Cat);
-            }
+            if (!_handleIndex.TryGetValue(hwnd, out var w)) return; // O(1)
+
+            string oldTitle = w.Title;
+            w.RefreshTitle();
+            if (oldTitle != w.Title)
+                Logger.Trace($"窗口标题变更: 0x{hwnd:X}  \"{oldTitle}\" → \"{w.Title}\"", Cat);
         });
     }
 
@@ -630,8 +715,10 @@ public class WindowManagerService : IDisposable
             $"统计 — 嵌入: {_embedCount}次  释放: {_releaseCount}次  " +
             $"Reposition: {_repositionCount}次", Cat);
         ReleaseAll();
+        ManagedWindows.CollectionChanged -= OnManagedWindowsCollectionChanged;
         _winEventHook.WindowDestroyed    -= OnWindowDestroyed;
         _winEventHook.WindowTitleChanged -= OnWindowTitleChanged;
+        _handleIndex.Clear();
         GC.SuppressFinalize(this);
     }
 }

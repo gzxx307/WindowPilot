@@ -165,7 +165,10 @@
                                  Background="Transparent" BorderThickness="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  SelectionMode="Single" Visibility="Collapsed"
-                                 MouseLeave="WindowListBox_MouseLeave">
+                                 MouseLeave="WindowListBox_MouseLeave"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.VirtualizationMode="Recycling"
+                                 VirtualizingPanel.ScrollUnit="Item">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -211,7 +214,7 @@
                                             </Grid.ColumnDefinitions>
                                             <Image Grid.Column="0" Source="{Binding Icon}"
                                                    Width="20" Height="20"
-                                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                                   RenderOptions.BitmapScalingMode="LowQuality"
                                                    VerticalAlignment="Center" />
                                             <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Title}"
