@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>statusbar</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background: #007ACC;
+  color: #fff;
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 状态栏行，与原版 Border padding="10,4" 一致 */
+#statusbar {
+  height: 100%;
+  background: #007ACC;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  gap: 8px;
+}
+
+#status-text {
+  font-size: 11px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+#status-hint {
+  font-size: 10px;
+  color: rgba(255,255,255,0.73);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+<div id="statusbar">
+  <span id="status-text">就绪</span>
+  <span id="status-hint">Ctrl+Alt+G 抓取 │ Ctrl+Alt+M 拖拽移动 │ Ctrl+Alt+← → 切换 │ 侧边栏条目可拖拽排序</span>
+</div>
+
+<script>
+'use strict';
+function send(msg) { window.chrome.webview.postMessage(msg); }
+
+window.chrome.webview.addEventListener('message', (e) => {
+  try {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'status') {
+      document.getElementById('status-text').textContent = msg.message ?? '';
+    }
+  } catch {}
+});
+
+document.addEventListener('DOMContentLoaded', () => send({ type: 'statusReady' }));
+</script>
+</body>
+</html>

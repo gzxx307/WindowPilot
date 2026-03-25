@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>sidebar</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background: #252526;
+  color: #CCCCCC;
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #777; }
+
+/* ── Shell ─────────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #252526;
+}
+
+/* ── Sidebar header（对应原版标题行 Border）─────────────────────────── */
+#sidebar-header {
+  background: #2D2D30;
+  border-bottom: 1px solid #3F3F46;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+.sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #969696;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#btn-collapse {
+  width: 22px; height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #969696;
+  cursor: pointer;
+  font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+#btn-collapse:hover { background: #3E3E42; }
+
+/* ── Window list ─────────────────────────────────────────────────────── */
+#list-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+#window-list {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Empty state（对应原版 EmptyStatePanel）*/
+#empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+}
+.empty-icon { font-size: 36px; color: #969696; opacity: 0.6; margin-bottom: 10px; }
+.empty-text { font-size: 12.5px; color: #969696; line-height: 1.6; margin-bottom: 6px; }
+.empty-sub  { font-size: 11px; color: #969696; opacity: 0.6; line-height: 1.7; }
+
+/* Window item（对应原版 ListBoxItem DataTemplate）*/
+.win-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 0 6px 0;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s, border-color 0.12s;
+}
+.win-item:hover  { background: #3E3E42; }
+.win-item.active {
+  background: #37373D;
+  border-left-color: #007ACC;
+}
+.win-item.drag-over { background: #3E3E42; border-left-color: #3F3F46; }
+.win-item.dragging  { opacity: 0.4; }
+
+.win-icon-col {
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.win-icon {
+  width: 20px; height: 20px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+.win-icon-ph {
+  width: 20px; height: 20px;
+  border-radius: 3px;
+  background: #3E3E42;
+  border: 1px solid #3F3F46;
+  display: flex; align-items: center; justify-content: center;
+  color: #969696;
+  font-size: 10px; font-weight: 600;
+}
+
+.win-info {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+}
+.win-title {
+  font-size: 12px;
+  color: #CCCCCC;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.win-process {
+  font-size: 10px;
+  color: #969696;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.win-rel-btn {
+  width: 22px; height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #969696;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  margin-right: 4px;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
+}
+.win-item:hover .win-rel-btn { opacity: 1; }
+.win-rel-btn:hover { background: rgba(244,71,71,0.18); color: #F44747; }
+
+/* ── Release zone（对应原版 SidebarReleaseZone，拖拽时出现）─────────── */
+#release-zone {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 52px;
+  background: rgba(244,71,71,0.2);
+  border-top: 1px solid #F44747;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 3px;
+  z-index: 10;
+}
+#release-zone.visible { display: flex; }
+.rel-icon { font-size: 13px; font-weight: bold; color: #F44747; }
+.rel-text  { font-size: 10px; color: #F44747; }
+
+/* ── Drop overlay（外部窗口拖入时）────────────────────────────────── */
+#drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,122,204,0.13);
+  border: 2px solid rgba(0,122,204,0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  pointer-events: none;
+}
+#drop-overlay.visible { display: flex; }
+.drop-label {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+
+/* ── Collapsed state ────────────────────────────────────────────────── */
+#app.collapsed #sidebar-header .sidebar-title { display: none; }
+#app.collapsed #btn-collapse { transform: scaleX(-1); }
+#app.collapsed #list-area { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Sidebar header -->
+  <div id="sidebar-header">
+    <span class="sidebar-title">管理的窗口</span>
+    <button id="btn-collapse" title="折叠侧边栏">◀</button>
+  </div>
+
+  <!-- Window list -->
+  <div id="list-area">
+    <div id="window-list">
+      <div id="empty-state">
+        <div class="empty-icon">◇</div>
+        <div class="empty-text">拖拽窗口到此侧边栏</div>
+        <div class="empty-sub">或按 Ctrl+Alt+G<br>抓取当前活动窗口</div>
+      </div>
+    </div>
+
+    <!-- Release zone -->
+    <div id="release-zone">
+      <span class="rel-icon">✕</span>
+      <span class="rel-text">拖至此处释放托管</span>
+    </div>
+  </div>
+
+  <!-- Drop overlay -->
+  <div id="drop-overlay">
+    <div class="drop-label">拖放窗口到此处进行管理</div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+function send(msg) { window.chrome.webview.postMessage(msg); }
+
+// C# → JS
+window.chrome.webview.addEventListener('message', (e) => {
+  try {
+    const msg = JSON.parse(e.data);
+    switch (msg.type) {
+      case 'windowList':
+        renderList(msg.windows ?? []);
+        break;
+      case 'collapsed':
+        document.getElementById('app').classList.toggle('collapsed', !!msg.collapsed);
+        document.getElementById('btn-collapse').title =
+          msg.collapsed ? '展开侧边栏' : '折叠侧边栏';
+        break;
+      case 'dropOverlay':
+        document.getElementById('drop-overlay').classList.toggle('visible', !!msg.visible);
+        break;
+    }
+  } catch {}
+});
+
+// ── Sidebar header buttons ────────────────────────────────────────────
+document.getElementById('btn-collapse').addEventListener('click', () =>
+  send({ type: 'toggleSidebar' }));
+
+// ── Window list rendering ─────────────────────────────────────────────
+let _dragging = null;
+
+function renderList(windows) {
+  const list  = document.getElementById('window-list');
+  const empty = document.getElementById('empty-state');
+
+  if (windows.length === 0) {
+    empty.style.display = '';
+    list.querySelectorAll('.win-item').forEach(el => el.remove());
+    return;
+  }
+  empty.style.display = 'none';
+
+  const existing = new Map();
+  list.querySelectorAll('.win-item').forEach(el => existing.set(el.dataset.handle, el));
+
+  const newSet = new Set(windows.map(w => w.handle));
+  for (const [h, el] of existing)
+    if (!newSet.has(h)) el.remove();
+
+  windows.forEach(win => {
+    let el = existing.get(win.handle);
+    if (!el) {
+      el = makeItem(win);
+      list.appendChild(el);
+    } else {
+      patchItem(el, win);
+    }
+    el.classList.toggle('active', !!win.isActive);
+  });
+}
+
+function makeItem(win) {
+  const el = document.createElement('div');
+  el.className      = 'win-item';
+  el.dataset.handle = win.handle;
+  el.draggable      = true;
+  el.innerHTML      = itemHTML(win);
+
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.win-rel-btn')) return;
+    send({ type: 'activate', handle: el.dataset.handle });
+  });
+
+  el.querySelector('.win-rel-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    send({ type: 'release', handle: el.dataset.handle });
+  });
+
+  el.addEventListener('dragstart', (e) => {
+    _dragging = el.dataset.handle;
+    e.dataTransfer.setData('text/plain', el.dataset.handle);
+    e.dataTransfer.effectAllowed = 'move';
+    requestAnimationFrame(() => {
+      el.classList.add('dragging');
+      document.getElementById('release-zone').classList.add('visible');
+    });
+  });
+
+  el.addEventListener('dragend', () => {
+    _dragging = null;
+    el.classList.remove('dragging');
+    document.getElementById('release-zone').classList.remove('visible');
+    document.querySelectorAll('.win-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+  });
+
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (el.dataset.handle !== _dragging) {
+      document.querySelectorAll('.win-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+      el.classList.add('drag-over');
+    }
+  });
+
+  el.addEventListener('dragleave', (e) => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+  });
+
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    const from = e.dataTransfer.getData('text/plain');
+    const to   = el.dataset.handle;
+    if (from && to && from !== to)
+      send({ type: 'swapWindows', handle1: from, handle2: to });
+  });
+
+  return el;
+}
+
+function patchItem(el, win) {
+  const t = el.querySelector('.win-title');
+  if (t && t.textContent !== win.title) t.textContent = win.title;
+  const p = el.querySelector('.win-process');
+  if (p && p.textContent !== win.processName) p.textContent = win.processName;
+  const ic = el.querySelector('[data-icon-src]');
+  if (ic) {
+    const s = win.icon ?? '';
+    if (ic.dataset.iconSrc !== s) ic.outerHTML = iconHTML(win);
+  }
+}
+
+function itemHTML(win) {
+  return `<div class="win-icon-col">${iconHTML(win)}</div><div class="win-info"><div class="win-title">${esc(win.title)}</div><div class="win-process">${esc(win.processName)}</div></div><button class="win-rel-btn" title="释放">✕</button>`;
+}
+
+function iconHTML(win) {
+  const s = win.icon ?? '';
+  if (s) return `<img class="win-icon" src="${s}" alt="" data-icon-src="${s}">`;
+  return `<div class="win-icon-ph" data-icon-src="">${esc((win.processName || win.title || '?')[0].toUpperCase())}</div>`;
+}
+
+// Release zone drop
+document.getElementById('release-zone').addEventListener('dragover', (e) => {
+  e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+});
+document.getElementById('release-zone').addEventListener('drop', (e) => {
+  e.preventDefault();
+  const h = e.dataTransfer.getData('text/plain');
+  if (h) send({ type: 'release', handle: h });
+  document.getElementById('release-zone').classList.remove('visible');
+});
+
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', () => send({ type: 'sidebarReady' }));
+</script>
+</body>
+</html>

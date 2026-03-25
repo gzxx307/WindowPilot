@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>WindowPilot</title>
+  <style>
+    /* ─────────────────────────────────────────────────────────────────────
+       原版色彩体系（DarkTheme.xaml）
+       ───────────────────────────────────────────────────────────────────── */
+    :root {
+      --bg-primary:   #1E1E1E;
+      --bg-secondary: #252526;
+      --bg-tertiary:  #2D2D30;
+      --bg-hover:     #3E3E42;
+      --bg-active:    #37373D;
+      --bg-selected:  #094771;
+
+      --border:       #3F3F46;
+      --border-active:#007ACC;
+
+      --fg-primary:   #CCCCCC;
+      --fg-secondary: #969696;
+      --fg-error:     #F44747;
+
+      --accent:       #007ACC;
+      --accent-hover: #1C97EA;
+      --accent-dim:   rgba(0, 122, 204, 0.15);
+
+      --font: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-secondary);
+      color: var(--fg-primary);
+      font-family: var(--font);
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    ::-webkit-scrollbar       { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #777; }
+
+    /* ── App shell ─────────────────────────────────────────────────────── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       TOOLBAR（顶部，对应原版工具栏 Border Grid.Row="0"）
+       ══════════════════════════════════════════════════════════════════════ */
+    #toolbar {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 6px 8px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-wrap: wrap;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-right: 14px;
+      flex-shrink: 0;
+    }
+    .logo-icon { color: var(--accent); font-size: 16px; }
+    .logo-text { font-size: 14px; font-weight: 600; color: var(--fg-primary); white-space: nowrap; }
+
+    .sep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      margin: 0 6px;
+      flex-shrink: 0;
+    }
+
+    /* PilotButton style */
+    .btn {
+      background: var(--bg-tertiary);
+      color: var(--fg-primary);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 4px 10px;
+      font-family: var(--font);
+      font-size: 11.5px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.1s, border-color 0.1s;
+      line-height: 1.4;
+    }
+    .btn:hover { background: var(--bg-hover); border-color: var(--border-active); }
+    .btn:active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    .win-count {
+      font-size: 11.5px;
+      color: var(--fg-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       MAIN CONTENT（中间，flex:1，含 sidebar-header + window-list）
+       ══════════════════════════════════════════════════════════════════════ */
+    #content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ── Sidebar header（对应原版 SidebarTitleText + BtnToggleSidebar） ── */
+    #sidebar-header {
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+      padding: 5px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      min-height: 30px;
+    }
+
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #btn-collapse {
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 3px;
+      color: var(--fg-secondary);
+      cursor: pointer;
+      font-size: 10px;
+      flex-shrink: 0;
+      transition: background 0.1s;
+    }
+    #btn-collapse:hover { background: var(--bg-hover); }
+
+    /* ── Window list area ──────────────────────────────────────────────── */
+    #list-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #window-list {
+      height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    /* Empty state（对应原版 EmptyStatePanel）*/
+    #empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 20px;
+      text-align: center;
+      gap: 8px;
+    }
+    .empty-icon  { font-size: 36px; color: var(--fg-secondary); opacity: 0.6; }
+    .empty-text  { font-size: 12.5px; color: var(--fg-secondary); line-height: 1.6; }
+    .empty-sub   { font-size: 11px; color: var(--fg-secondary); opacity: 0.6; line-height: 1.7; }
+
+    /* Window item（对应原版 ListBoxItem DataTemplate）*/
+    .win-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 8px 6px 0;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: background 0.1s, border-color 0.15s;
+      gap: 0;
+    }
+    .win-item:hover  { background: var(--bg-hover); }
+    .win-item.active {
+      background: var(--bg-active);
+      border-left-color: var(--accent);
+    }
+    .win-item.drag-over { background: var(--bg-hover); border-left-color: var(--border); }
+    .win-item.dragging  { opacity: 0.4; }
+
+    .win-icon-wrap {
+      width: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .win-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 3px;
+      object-fit: contain;
+    }
+    .win-icon-ph {
+      width: 20px;
+      height: 20px;
+      border-radius: 3px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg-secondary);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .win-info {
+      flex: 1;
+      min-width: 0;
+      margin-left: 8px;
+    }
+    .win-title {
+      font-size: 12px;
+      color: var(--fg-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .win-process {
+      font-size: 10px;
+      color: var(--fg-secondary);
+      margin-top: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .win-release-btn {
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 3px;
+      color: var(--fg-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.1s, background 0.1s, color 0.1s;
+      margin-right: 4px;
+    }
+    .win-item:hover .win-release-btn { opacity: 1; }
+    .win-release-btn:hover { background: rgba(244,71,71,0.15); color: var(--fg-error); }
+
+    /* ── Release zone（对应原版 SidebarReleaseZone）- 拖拽时出现 ────────── */
+    #release-zone {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 52px;
+      background: rgba(244, 71, 71, 0.2);
+      border-top: 1px solid var(--fg-error);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 3px;
+      z-index: 10;
+    }
+    #release-zone.visible { display: flex; }
+    .release-icon { font-size: 13px; font-weight: bold; color: var(--fg-error); }
+    .release-text { font-size: 10px; color: var(--fg-error); }
+
+    /* ── Drop overlay（对应原版 DropZoneOverlay）──────────────────────── */
+    #drop-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 122, 204, 0.13);
+      border: 2px solid rgba(0, 122, 204, 0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      pointer-events: none;
+    }
+    #drop-overlay.visible { display: flex; }
+    .drop-label {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       STATUS BAR（底部，对应原版状态栏 Border Grid.Row="2"）
+       ══════════════════════════════════════════════════════════════════════ */
+    #status-bar {
+      background: var(--accent);
+      padding: 4px 10px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 26px;
+    }
+    #status-text {
+      font-size: 11px;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+    #status-hint {
+      font-size: 10px;
+      color: rgba(255,255,255,0.73);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       COLLAPSED STATE
+       ══════════════════════════════════════════════════════════════════════ */
+    #app.collapsed #toolbar .logo-text,
+    #app.collapsed #toolbar .btn,
+    #app.collapsed #toolbar .sep,
+    #app.collapsed #toolbar .win-count { display: none; }
+
+    #app.collapsed #toolbar { justify-content: center; padding: 6px 4px; }
+    #app.collapsed .sidebar-title { display: none; }
+    #app.collapsed #btn-collapse { transform: scaleX(-1); }
+    #app.collapsed #content { display: none; }
+    #app.collapsed #status-bar { display: none; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ TOOLBAR ══════════════════════════════════════════════════════ -->
+  <div id="toolbar">
+    <div class="toolbar-left">
+      <div class="logo">
+        <span class="logo-icon">◈</span>
+        <span class="logo-text">WindowPilot</span>
+      </div>
+
+      <button class="btn" id="btn-stacked"   data-mode="Stacked"   title="堆叠抽屉">▣ 堆叠</button>
+      <button class="btn" id="btn-quad"      data-mode="QuadSplit" title="四分区">⊞ 四分区</button>
+      <button class="btn" id="btn-leftright" data-mode="LeftRight" title="左右分屏">◫ 左右</button>
+      <button class="btn" id="btn-topbottom" data-mode="TopBottom" title="上下分屏">⬒ 上下</button>
+
+      <div class="sep"></div>
+
+      <button class="btn" id="btn-refresh" title="重新应用布局">↻ 重排</button>
+      <button class="btn" id="btn-release-all" title="释放所有托管窗口">✕ 全部释放</button>
+    </div>
+    <span class="win-count" id="win-count">0 个窗口</span>
+  </div>
+
+  <!-- ══ MAIN CONTENT ════════════════════════════════════════════════ -->
+  <div id="content">
+
+    <!-- Sidebar header -->
+    <div id="sidebar-header">
+      <span class="sidebar-title">管理的窗口</span>
+      <button id="btn-collapse" title="折叠侧边栏">◀</button>
+    </div>
+
+    <!-- Window list area -->
+    <div id="list-area">
+      <div id="window-list">
+        <!-- Empty state -->
+        <div id="empty-state">
+          <div class="empty-icon">◇</div>
+          <div class="empty-text">拖拽窗口到此侧边栏</div>
+          <div class="empty-sub">或按 Ctrl+Alt+G<br>抓取当前活动窗口</div>
+        </div>
+      </div>
+
+      <!-- Release zone（拖拽侧边栏条目时在底部出现） -->
+      <div id="release-zone">
+        <span class="release-icon">✕</span>
+        <span class="release-text">拖至此处释放托管</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ STATUS BAR ══════════════════════════════════════════════════ -->
+  <div id="status-bar">
+    <span id="status-text">就绪</span>
+    <span id="status-hint">Ctrl+Alt+G 抓取 │ Ctrl+Alt+M 拖拽 │ ← → 切换</span>
+  </div>
+
+  <!-- Drop overlay（外部窗口拖入时显示） -->
+  <div id="drop-overlay">
+    <div class="drop-label">拖放窗口到此处进行管理</div>
+  </div>
+
+</div>
+
+<script>
+  'use strict';
+
+  // ════════════════════════════════════════════════════════════════════
+  // Bridge: JS → C#
+  // 直接 postMessage(obj)，不要 JSON.stringify
+  // ════════════════════════════════════════════════════════════════════
+  function send(msg) {
+    window.chrome.webview.postMessage(msg);
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // Bridge: C# → JS
+  // C# 用 PostWebMessageAsString(json)，e.data 是 JSON 字符串
+  // ════════════════════════════════════════════════════════════════════
+  window.chrome.webview.addEventListener('message', (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+
+        case 'windowsUpdated':
+          updateWindowList(msg.windows ?? []);
+          updateLayoutButtons(msg.layoutMode ?? 'Stacked');
+          document.getElementById('win-count').textContent =
+                  msg.windowCount > 0 ? `${msg.windowCount} 个窗口` : '0 个窗口';
+          break;
+
+        case 'statusChanged':
+          document.getElementById('status-text').textContent = msg.message ?? '';
+          break;
+
+        case 'sidebarStateChanged':
+          document.getElementById('app').classList.toggle('collapsed', !!msg.collapsed);
+          document.getElementById('btn-collapse').title = msg.collapsed ? '展开侧边栏' : '折叠侧边栏';
+          break;
+
+        case 'dropOverlay':
+          document.getElementById('drop-overlay').classList.toggle('visible', !!msg.visible);
+          break;
+      }
+    } catch (err) {
+      console.error('bridge error:', err);
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════
+  // Toolbar button events
+  // ════════════════════════════════════════════════════════════════════
+  const LAYOUT_BTNS = ['btn-stacked','btn-quad','btn-leftright','btn-topbottom'];
+
+  LAYOUT_BTNS.forEach(id => {
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', () => {
+      send({ type: 'layoutMode', mode: btn.dataset.mode });
+    });
+  });
+
+  document.getElementById('btn-refresh').addEventListener('click', () => {
+    send({ type: 'refreshLayout' });
+  });
+
+  document.getElementById('btn-release-all').addEventListener('click', () => {
+    send({ type: 'releaseAll' });
+  });
+
+  document.getElementById('btn-collapse').addEventListener('click', () => {
+    send({ type: 'toggleSidebar' });
+  });
+
+  function updateLayoutButtons(mode) {
+    LAYOUT_BTNS.forEach(id => {
+      const btn = document.getElementById(id);
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // Window list rendering
+  // ════════════════════════════════════════════════════════════════════
+  let _draggingHandle = null;
+
+  function updateWindowList(windows) {
+    const list  = document.getElementById('window-list');
+    const empty = document.getElementById('empty-state');
+
+    if (windows.length === 0) {
+      empty.style.display = '';
+      list.querySelectorAll('.win-item').forEach(el => el.remove());
+      return;
+    }
+    empty.style.display = 'none';
+
+    // Build handle → DOM element map
+    const existing = new Map();
+    list.querySelectorAll('.win-item').forEach(el => existing.set(el.dataset.handle, el));
+
+    const newHandles = new Set(windows.map(w => w.handle));
+    for (const [h, el] of existing)
+      if (!newHandles.has(h)) el.remove();
+
+    windows.forEach(win => {
+      let el = existing.get(win.handle);
+      if (!el) {
+        el = makeWinItem(win);
+        list.appendChild(el);
+      } else {
+        patchWinItem(el, win);
+      }
+      el.classList.toggle('active', !!win.isActive);
+    });
+  }
+
+  function makeWinItem(win) {
+    const el = document.createElement('div');
+    el.className      = 'win-item';
+    el.dataset.handle = win.handle;
+    el.draggable      = true;
+    el.innerHTML      = itemHTML(win);
+
+    // Click → activate (ignores clicks on release button)
+    el.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.win-release-btn')) return;
+      send({ type: 'activate', handle: el.dataset.handle });
+    });
+
+    // Release button
+    el.querySelector('.win-release-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      send({ type: 'release', handle: el.dataset.handle });
+    });
+
+    // ── Drag to reorder ──────────────────────────────────────────────
+    el.addEventListener('dragstart', (e) => {
+      _draggingHandle = el.dataset.handle;
+      e.dataTransfer.setData('text/plain', el.dataset.handle);
+      e.dataTransfer.effectAllowed = 'move';
+      requestAnimationFrame(() => {
+        el.classList.add('dragging');
+        document.getElementById('release-zone').classList.add('visible');
+      });
+    });
+
+    el.addEventListener('dragend', () => {
+      _draggingHandle = null;
+      el.classList.remove('dragging');
+      document.getElementById('release-zone').classList.remove('visible');
+      document.querySelectorAll('.win-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+    });
+
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (el.dataset.handle !== _draggingHandle) {
+        document.querySelectorAll('.win-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+        el.classList.add('drag-over');
+      }
+    });
+
+    el.addEventListener('dragleave', (e) => {
+      if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+    });
+
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const from = e.dataTransfer.getData('text/plain');
+      const to   = el.dataset.handle;
+      if (from && to && from !== to)
+        send({ type: 'swapWindows', handle1: from, handle2: to });
+    });
+
+    return el;
+  }
+
+  function patchWinItem(el, win) {
+    const t = el.querySelector('.win-title');
+    if (t && t.textContent !== win.title) t.textContent = win.title;
+    const p = el.querySelector('.win-process');
+    if (p && p.textContent !== win.processName) p.textContent = win.processName;
+    const ic = el.querySelector('[data-icon-src]');
+    if (ic) {
+      const s = win.icon ?? '';
+      if (ic.dataset.iconSrc !== s) ic.outerHTML = iconHTML(win);
+    }
+  }
+
+  function itemHTML(win) {
+    return `
+    <div class="win-icon-wrap">${iconHTML(win)}</div>
+    <div class="win-info">
+      <div class="win-title">${esc(win.title)}</div>
+      <div class="win-process">${esc(win.processName)}</div>
+    </div>
+    <button class="win-release-btn" title="释放">✕</button>
+  `;
+  }
+
+  function iconHTML(win) {
+    const s = win.icon ?? '';
+    if (s) return `<img class="win-icon" src="${s}" alt="" data-icon-src="${s}">`;
+    const i = esc((win.processName || win.title || '?')[0].toUpperCase());
+    return `<div class="win-icon-ph" data-icon-src="">${i}</div>`;
+  }
+
+  // Release zone drop
+  document.getElementById('release-zone').addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  document.getElementById('release-zone').addEventListener('drop', (e) => {
+    e.preventDefault();
+    const handle = e.dataTransfer.getData('text/plain');
+    if (handle) send({ type: 'release', handle });
+    document.getElementById('release-zone').classList.remove('visible');
+  });
+
+  // ════════════════════════════════════════════════════════════════════
+  // Utility
+  // ════════════════════════════════════════════════════════════════════
+  function esc(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // Init: 通知 C# UI 已就绪
+  // ════════════════════════════════════════════════════════════════════
+  document.addEventListener('DOMContentLoaded', () => {
+    send({ type: 'ready' });
+  });
+</script>
+</body>
+</html>

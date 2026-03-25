@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>toolbar</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background: #252526;
+  color: #CCCCCC;
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 整个工具栏行，与原版 Border padding="8,6" 一致 */
+#toolbar {
+  height: 100%;
+  background: #252526;
+  border-bottom: 1px solid #3F3F46;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Logo 区域 */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 14px;
+  flex-shrink: 0;
+}
+.logo-icon { color: #007ACC; font-size: 16px; line-height: 1; }
+.logo-text { font-size: 14px; font-weight: 600; white-space: nowrap; }
+
+/* 竖向分隔线，对应原版 Rectangle */
+.sep {
+  width: 1px;
+  height: 20px;
+  background: #3F3F46;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* PilotButton 样式 */
+.btn {
+  background: #2D2D30;
+  color: #CCCCCC;
+  border: 1px solid #3F3F46;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: background 0.1s, border-color 0.1s;
+}
+.btn:hover  { background: #3E3E42; border-color: #007ACC; }
+.btn:active { background: #007ACC; color: #fff; }
+.btn.active { background: #007ACC; color: #fff; border-color: #007ACC; }
+
+/* 右侧窗口计数 */
+.win-count {
+  font-size: 11.5px;
+  color: #969696;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <div class="left">
+    <div class="logo">
+      <span class="logo-icon">◈</span>
+      <span class="logo-text">WindowPilot</span>
+    </div>
+
+    <button class="btn" id="btn-stacked"   data-mode="Stacked">▣ 堆叠</button>
+    <button class="btn" id="btn-quad"      data-mode="QuadSplit">⊞ 四分区</button>
+    <button class="btn" id="btn-leftright" data-mode="LeftRight">◫ 左右</button>
+    <button class="btn" id="btn-topbottom" data-mode="TopBottom">⬒ 上下</button>
+
+    <div class="sep"></div>
+
+    <button class="btn" id="btn-refresh">↻ 重排</button>
+    <button class="btn" id="btn-release-all">✕ 全部释放</button>
+  </div>
+  <span class="win-count" id="win-count">0 个窗口</span>
+</div>
+
+<script>
+'use strict';
+function send(msg) { window.chrome.webview.postMessage(msg); }
+
+// C# → JS
+window.chrome.webview.addEventListener('message', (e) => {
+  try {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'layoutMode') {
+      document.querySelectorAll('.btn[data-mode]').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === msg.activeMode);
+      });
+    } else if (msg.type === 'windowCount') {
+      document.getElementById('win-count').textContent =
+        msg.count > 0 ? `${msg.count} 个窗口` : '0 个窗口';
+    }
+  } catch {}
+});
+
+// 布局按钮
+document.querySelectorAll('.btn[data-mode]').forEach(btn => {
+  btn.addEventListener('click', () => send({ type: 'layoutMode', mode: btn.dataset.mode }));
+});
+
+document.getElementById('btn-refresh').addEventListener('click', () =>
+  send({ type: 'refreshLayout' }));
+
+document.getElementById('btn-release-all').addEventListener('click', () =>
+  send({ type: 'releaseAll' }));
+
+// 通知 C# 工具栏已就绪
+document.addEventListener('DOMContentLoaded', () => send({ type: 'toolbarReady' }));
+</script>
+</body>
+</html>
